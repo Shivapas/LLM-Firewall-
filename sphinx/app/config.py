@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     gateway_port: int = 8000
     credential_encryption_key: str = ""
     default_provider_url: str = "http://localhost:9000"
+    kafka_bootstrap_servers: str = "localhost:9092"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
