@@ -13,6 +13,7 @@ from app.services.kill_switch import sync_kill_switches_to_cache
 from app.services.routing import initialize_registry
 from app.services.credential_store import list_providers, get_provider_credential
 from app.services.audit import get_audit_writer, get_audit_consumer
+from app.services.threat_detection.engine import get_threat_engine, reset_threat_engine
 
 logger = logging.getLogger("sphinx.main")
 
@@ -52,6 +53,41 @@ async def lifespan(app: FastAPI):
         audit_consumer = get_audit_consumer()
         await audit_consumer.start(async_session)
 
+        # Initialize Tier 1 Threat Detection Engine
+        threat_engine = get_threat_engine()
+        logger.info(
+            "Threat detection engine initialized: %d patterns loaded",
+            threat_engine.library.count(),
+        )
+
+        # Load custom security rules from DB into threat engine
+        from app.models.api_key import SecurityRule
+        try:
+            async with async_session() as db:
+                from sqlalchemy import select
+                result = await db.execute(
+                    select(SecurityRule).where(SecurityRule.is_active == True)
+                )
+                custom_rules = result.scalars().all()
+                if custom_rules:
+                    import json as _json
+                    rule_dicts = [
+                        {
+                            "id": f"custom-{r.id}",
+                            "name": r.name,
+                            "category": r.category,
+                            "severity": r.severity,
+                            "pattern": r.pattern,
+                            "description": r.description,
+                            "tags": _json.loads(r.tags_json) if r.tags_json else [],
+                        }
+                        for r in custom_rules
+                    ]
+                    threat_engine.load_policy_rules(rule_dicts)
+                    logger.info("Loaded %d custom security rules from DB", len(custom_rules))
+        except Exception:
+            logger.warning("Failed to load custom security rules (table may not exist)", exc_info=True)
+
         logger.info("Startup complete: policy cache loaded, kill-switches synced, audit system ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
@@ -77,7 +113,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sphinx AI Mesh Firewall",
     description="Gateway proxy for LLM provider traffic with multi-provider routing and audit",
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 

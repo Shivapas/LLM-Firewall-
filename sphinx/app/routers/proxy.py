@@ -13,6 +13,7 @@ from app.services.kill_switch import check_kill_switch
 from app.services.token_budget import record_token_usage, persist_usage_to_db
 from app.services.routing import resolve_provider, route_request
 from app.services.audit import emit_audit_event
+from app.services.threat_detection.engine import get_threat_engine
 from app.services.database import async_session
 from app.config import get_settings
 
@@ -95,6 +96,57 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 payload["model"] = ks["fallback_model"]
                 body = json.dumps(payload).encode()
                 model_name = ks["fallback_model"]
+
+    # ── Tier 1 Threat Detection ──
+    threat_engine = get_threat_engine()
+    threat_result = threat_engine.scan_request_body(body)
+
+    if threat_result.action == "block":
+        logger.warning(
+            "Threat detection BLOCKED request tenant=%s risk=%s score=%.3f reason=%s",
+            tenant_id, threat_result.risk_level, threat_result.score, threat_result.reason,
+        )
+        latency_ms = (time.time() - start_time) * 1000
+        try:
+            await emit_audit_event(
+                request_body=body, tenant_id=tenant_id, project_id=project_id,
+                api_key_id=str(api_key_id) if api_key_id else "",
+                model=model_name or "unknown", action="blocked_threat",
+                status_code=403, latency_ms=latency_ms,
+                metadata={
+                    "reason": threat_result.reason,
+                    "risk_level": threat_result.risk_level,
+                    "score": threat_result.score,
+                    "matched_patterns": threat_result.matched_patterns or [],
+                },
+            )
+        except Exception:
+            logger.debug("Failed to emit audit event", exc_info=True)
+
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Request blocked by security policy",
+                "risk_level": threat_result.risk_level,
+                "score": round(threat_result.score, 4),
+                "reason": threat_result.reason,
+            },
+        )
+    elif threat_result.action == "rewrite":
+        logger.info(
+            "Threat detection REWRITING request tenant=%s risk=%s",
+            tenant_id, threat_result.risk_level,
+        )
+        body = threat_engine.apply_rewrite_to_body(body, threat_result)
+        audit_action = "rewritten_threat"
+    elif threat_result.action == "downgrade":
+        logger.info(
+            "Threat detection DOWNGRADING model tenant=%s risk=%s -> %s",
+            tenant_id, threat_result.risk_level, threat_result.downgrade_model,
+        )
+        body = threat_engine.apply_downgrade_to_body(body, threat_result)
+        model_name = threat_result.downgrade_model or model_name
+        audit_action = "downgraded_threat"
 
     # ── Rate limit check ──
     estimated_tokens = _estimate_prompt_tokens(body)

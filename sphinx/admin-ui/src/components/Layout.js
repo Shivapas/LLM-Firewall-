@@ -33,6 +33,7 @@ export default function Layout() {
                 <nav style={styles.nav}>
                     <Link to="/" style={styles.navLink(location.pathname === '/')}>Dashboard</Link>
                     <Link to="/keys" style={styles.navLink(location.pathname === '/keys')}>API Keys</Link>
+                    <Link to="/policies" style={styles.navLink(location.pathname === '/policies')}>Security Policies</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>
