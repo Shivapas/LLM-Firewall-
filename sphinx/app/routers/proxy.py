@@ -1,8 +1,10 @@
 """Gateway proxy router with multi-provider routing, audit events, and streaming support."""
 
+import asyncio
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse, Response
@@ -14,8 +16,11 @@ from app.services.token_budget import record_token_usage, persist_usage_to_db
 from app.services.routing import resolve_provider, route_request
 from app.services.audit import emit_audit_event
 from app.services.threat_detection.engine import get_threat_engine
+from app.services.data_shield.engine import get_data_shield_engine
 from app.services.database import async_session
 from app.config import get_settings
+
+_scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gateway-scan")
 
 logger = logging.getLogger("sphinx.proxy")
 
@@ -97,9 +102,31 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 body = json.dumps(payload).encode()
                 model_name = ks["fallback_model"]
 
-    # ── Tier 1 Threat Detection ──
+    # ── Tier 1 Threat Detection + Data Shield (parallel) ──
     threat_engine = get_threat_engine()
-    threat_result = threat_engine.scan_request_body(body)
+    data_shield = get_data_shield_engine()
+
+    loop = asyncio.get_event_loop()
+    threat_future = loop.run_in_executor(_scan_executor, threat_engine.scan_request_body, body)
+    shield_future = loop.run_in_executor(
+        _scan_executor, lambda: data_shield.scan_request_body(body),
+    )
+
+    threat_result, (shielded_body, shield_result) = await asyncio.gather(
+        threat_future, shield_future,
+    )
+
+    # Apply PII redaction to body (before threat action enforcement)
+    if shield_result and shield_result.redaction and shield_result.redaction.redaction_count > 0:
+        body = shielded_body
+        logger.info(
+            "Data Shield redacted %d entities (pii=%d phi=%d cred=%d) tenant=%s",
+            shield_result.redaction.redaction_count,
+            shield_result.pii_count,
+            shield_result.phi_count,
+            shield_result.credential_count,
+            tenant_id,
+        )
 
     if threat_result.action == "block":
         logger.warning(
@@ -198,6 +225,9 @@ async def gateway_proxy(request: Request, path: str) -> Response:
 
     # ── Audit event emission ──
     latency_ms = (time.time() - start_time) * 1000
+    audit_metadata = {}
+    if shield_result and shield_result.redaction and shield_result.redaction.redaction_count > 0:
+        audit_metadata["data_shield"] = shield_result.to_dict()
     try:
         await emit_audit_event(
             request_body=body,
@@ -210,6 +240,7 @@ async def gateway_proxy(request: Request, path: str) -> Response:
             status_code=response.status_code,
             latency_ms=latency_ms,
             prompt_tokens=estimated_tokens,
+            metadata=audit_metadata if audit_metadata else None,
         )
     except Exception:
         logger.debug("Failed to emit audit event", exc_info=True)
