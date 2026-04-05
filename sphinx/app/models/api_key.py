@@ -227,6 +227,13 @@ class VectorCollectionPolicy(Base):
     )
     namespace_field: Mapped[str] = mapped_column(String(128), default="tenant_id")
     max_results: Mapped[int] = mapped_column(Integer, default=10)
+    block_sensitive_documents: Mapped[bool] = mapped_column(Boolean, default=False)
+    sensitive_field_patterns: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list
+    )  # regex patterns for sensitive field matching
+    anomaly_distance_threshold: Mapped[float] = mapped_column(Float, default=0.0)  # 0 = disabled
+    scan_chunks_for_injection: Mapped[bool] = mapped_column(Boolean, default=True)
+    max_tokens_per_chunk: Mapped[int] = mapped_column(Integer, default=512)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="*")  # * = global
     created_at: Mapped[datetime] = mapped_column(
@@ -234,6 +241,30 @@ class VectorCollectionPolicy(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Incident(Base):
+    """Incident record for indirect injection detection in retrieved chunks."""
+    __tablename__ = "incidents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    incident_type: Mapped[str] = mapped_column(
+        String(64), index=True, default="indirect_injection"
+    )  # indirect_injection, sensitive_field_block, embedding_anomaly
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    collection_name: Mapped[str] = mapped_column(String(256), index=True, default="")
+    chunk_content_hash: Mapped[str] = mapped_column(String(64), default="")
+    chunk_id: Mapped[str] = mapped_column(String(256), default="")
+    matched_patterns: Mapped[str] = mapped_column(Text, default="[]")  # JSON array of pattern IDs
+    risk_level: Mapped[str] = mapped_column(String(16), default="high")
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    action_taken: Mapped[str] = mapped_column(String(32), default="blocked")  # blocked, alerted
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

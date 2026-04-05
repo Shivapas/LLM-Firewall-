@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -1038,6 +1038,12 @@ class CreateVectorCollectionRequest(BaseModel):
     namespace_field: str = "tenant_id"
     max_results: int = 10
     tenant_id: str = "*"
+    # Sprint 9 fields
+    block_sensitive_documents: bool = False
+    sensitive_field_patterns: list[str] = []
+    anomaly_distance_threshold: float = 0.0
+    scan_chunks_for_injection: bool = True
+    max_tokens_per_chunk: int = 512
 
 
 class VectorCollectionInfo(BaseModel):
@@ -1052,6 +1058,12 @@ class VectorCollectionInfo(BaseModel):
     is_active: bool
     tenant_id: str
     created_at: Optional[datetime]
+    # Sprint 9 fields
+    block_sensitive_documents: bool = False
+    sensitive_field_patterns: list[str] = []
+    anomaly_distance_threshold: float = 0.0
+    scan_chunks_for_injection: bool = True
+    max_tokens_per_chunk: int = 512
 
 
 class UpdateVectorCollectionRequest(BaseModel):
@@ -1061,6 +1073,12 @@ class UpdateVectorCollectionRequest(BaseModel):
     namespace_field: Optional[str] = None
     max_results: Optional[int] = None
     is_active: Optional[bool] = None
+    # Sprint 9 fields
+    block_sensitive_documents: Optional[bool] = None
+    sensitive_field_patterns: Optional[list[str]] = None
+    anomaly_distance_threshold: Optional[float] = None
+    scan_chunks_for_injection: Optional[bool] = None
+    max_tokens_per_chunk: Optional[int] = None
 
 
 @router.post("/vector-collections", response_model=VectorCollectionInfo)
@@ -1117,6 +1135,11 @@ async def create_vector_collection(
         namespace_field=body.namespace_field,
         max_results=body.max_results,
         tenant_id=body.tenant_id,
+        block_sensitive_documents=body.block_sensitive_documents,
+        sensitive_field_patterns=body.sensitive_field_patterns,
+        anomaly_distance_threshold=body.anomaly_distance_threshold,
+        scan_chunks_for_injection=body.scan_chunks_for_injection,
+        max_tokens_per_chunk=body.max_tokens_per_chunk,
     )
     db.add(policy)
     await db.commit()
@@ -1195,6 +1218,17 @@ async def update_vector_collection(
         policy.max_results = body.max_results
     if body.is_active is not None:
         policy.is_active = body.is_active
+    # Sprint 9 fields
+    if body.block_sensitive_documents is not None:
+        policy.block_sensitive_documents = body.block_sensitive_documents
+    if body.sensitive_field_patterns is not None:
+        policy.sensitive_field_patterns = body.sensitive_field_patterns
+    if body.anomaly_distance_threshold is not None:
+        policy.anomaly_distance_threshold = body.anomaly_distance_threshold
+    if body.scan_chunks_for_injection is not None:
+        policy.scan_chunks_for_injection = body.scan_chunks_for_injection
+    if body.max_tokens_per_chunk is not None:
+        policy.max_tokens_per_chunk = body.max_tokens_per_chunk
 
     await db.commit()
     await db.refresh(policy)
@@ -1292,6 +1326,11 @@ def _vector_collection_to_info(policy: VectorCollectionPolicy) -> VectorCollecti
         is_active=policy.is_active,
         tenant_id=policy.tenant_id,
         created_at=policy.created_at,
+        block_sensitive_documents=policy.block_sensitive_documents,
+        sensitive_field_patterns=policy.sensitive_field_patterns or [],
+        anomaly_distance_threshold=policy.anomaly_distance_threshold,
+        scan_chunks_for_injection=policy.scan_chunks_for_injection,
+        max_tokens_per_chunk=policy.max_tokens_per_chunk,
     )
 
 
@@ -1325,5 +1364,103 @@ def _sync_policy_to_proxy(db_policy: VectorCollectionPolicy) -> None:
         max_results=db_policy.max_results,
         is_active=db_policy.is_active,
         tenant_id=db_policy.tenant_id,
+        scan_chunks_for_injection=db_policy.scan_chunks_for_injection,
+        block_sensitive_documents=db_policy.block_sensitive_documents,
+        sensitive_field_patterns=db_policy.sensitive_field_patterns or [],
+        anomaly_distance_threshold=db_policy.anomaly_distance_threshold,
+        max_tokens_per_chunk=db_policy.max_tokens_per_chunk,
     )
     proxy.register_policy(policy)
+
+
+# ── Sprint 9: Incident Endpoints ─────────────────────────────────────────
+
+
+class IncidentInfo(BaseModel):
+    id: str
+    incident_type: str
+    tenant_id: str
+    collection_name: str
+    chunk_content_hash: str
+    chunk_id: str
+    matched_patterns: str
+    risk_level: str
+    score: float
+    action_taken: str
+    metadata_json: str
+    created_at: Optional[datetime]
+
+
+@router.get("/incidents", response_model=list[IncidentInfo])
+async def list_incidents(
+    tenant_id: Optional[str] = None,
+    collection_name: Optional[str] = None,
+    incident_type: Optional[str] = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """List recorded incidents (indirect injection, sensitive field blocks, anomalies)."""
+    query = select(Incident).order_by(Incident.created_at.desc()).limit(min(limit, 200))
+    if tenant_id:
+        query = query.where(Incident.tenant_id == tenant_id)
+    if collection_name:
+        query = query.where(Incident.collection_name == collection_name)
+    if incident_type:
+        query = query.where(Incident.incident_type == incident_type)
+
+    result = await db.execute(query)
+    incidents = result.scalars().all()
+    return [
+        IncidentInfo(
+            id=str(i.id),
+            incident_type=i.incident_type,
+            tenant_id=i.tenant_id,
+            collection_name=i.collection_name,
+            chunk_content_hash=i.chunk_content_hash,
+            chunk_id=i.chunk_id,
+            matched_patterns=i.matched_patterns,
+            risk_level=i.risk_level,
+            score=i.score,
+            action_taken=i.action_taken,
+            metadata_json=i.metadata_json,
+            created_at=i.created_at,
+        )
+        for i in incidents
+    ]
+
+
+@router.get("/incidents/{incident_id}", response_model=IncidentInfo)
+async def get_incident(incident_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Get a specific incident by ID."""
+    result = await db.execute(select(Incident).where(Incident.id == incident_id))
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return IncidentInfo(
+        id=str(incident.id),
+        incident_type=incident.incident_type,
+        tenant_id=incident.tenant_id,
+        collection_name=incident.collection_name,
+        chunk_content_hash=incident.chunk_content_hash,
+        chunk_id=incident.chunk_id,
+        matched_patterns=incident.matched_patterns,
+        risk_level=incident.risk_level,
+        score=incident.score,
+        action_taken=incident.action_taken,
+        metadata_json=incident.metadata_json,
+        created_at=incident.created_at,
+    )
+
+
+@router.get("/chunk-scan/status")
+async def chunk_scan_status():
+    """Get chunk scanner status and recent incident summary."""
+    from app.services.vectordb.chunk_scanner import get_chunk_scanner, get_incident_logger
+
+    scanner = get_chunk_scanner()
+    incident_logger = get_incident_logger()
+    pending = incident_logger.get_pending()
+    return {
+        "scanner_active": True,
+        "pending_incidents": len(pending),
+    }
