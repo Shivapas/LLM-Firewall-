@@ -1,5 +1,8 @@
+"""Gateway proxy router with multi-provider routing, audit events, and streaming support."""
+
 import json
 import logging
+import time
 
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse, Response
@@ -8,6 +11,8 @@ from app.services.proxy import proxy_request
 from app.services.rate_limiter import check_rate_limit
 from app.services.kill_switch import check_kill_switch
 from app.services.token_budget import record_token_usage, persist_usage_to_db
+from app.services.routing import resolve_provider, route_request
+from app.services.audit import emit_audit_event
 from app.services.database import async_session
 from app.config import get_settings
 
@@ -37,9 +42,9 @@ def _estimate_prompt_tokens(body: bytes) -> int:
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
 )
 async def gateway_proxy(request: Request, path: str) -> Response:
-    """Main gateway proxy endpoint with rate limiting, kill-switch, and token tracking."""
+    """Main gateway proxy endpoint with multi-provider routing, audit, rate limiting, and kill-switch."""
     settings = get_settings()
-    target_url = settings.default_provider_url
+    start_time = time.time()
 
     tenant_id = getattr(request.state, "tenant_id", "unknown")
     project_id = getattr(request.state, "project_id", "unknown")
@@ -48,6 +53,8 @@ async def gateway_proxy(request: Request, path: str) -> Response:
 
     body = await request.body()
     model_name = _extract_model_from_body(body)
+    audit_action = "allowed"
+    provider_name = ""
 
     # ── Kill-switch check (earliest pipeline stage) ──
     if model_name:
@@ -58,6 +65,18 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                     "Kill-switch BLOCKED model=%s tenant=%s reason=%s",
                     model_name, tenant_id, ks.get("reason", ""),
                 )
+                latency_ms = (time.time() - start_time) * 1000
+                try:
+                    await emit_audit_event(
+                        request_body=body, tenant_id=tenant_id, project_id=project_id,
+                        api_key_id=str(api_key_id) if api_key_id else "",
+                        model=model_name, action="blocked",
+                        status_code=503, latency_ms=latency_ms,
+                        metadata={"reason": ks.get("reason", "Kill-switch active")},
+                    )
+                except Exception:
+                    logger.debug("Failed to emit audit event", exc_info=True)
+
                 return JSONResponse(
                     status_code=503,
                     content={
@@ -71,21 +90,31 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                     "Kill-switch REROUTING model=%s -> %s tenant=%s",
                     model_name, ks["fallback_model"], tenant_id,
                 )
-                # Rewrite the model in the body
+                audit_action = "rerouted"
                 payload = json.loads(body)
                 payload["model"] = ks["fallback_model"]
                 body = json.dumps(payload).encode()
                 model_name = ks["fallback_model"]
 
     # ── Rate limit check ──
+    estimated_tokens = _estimate_prompt_tokens(body)
     if api_key_id:
-        estimated_tokens = _estimate_prompt_tokens(body)
         rate_result = await check_rate_limit(api_key_id, tpm_limit, estimated_tokens)
         if not rate_result["allowed"]:
             logger.warning(
                 "Rate limit exceeded key=%s usage=%d limit=%d",
                 api_key_id, rate_result["current_usage"], tpm_limit,
             )
+            latency_ms = (time.time() - start_time) * 1000
+            try:
+                await emit_audit_event(
+                    request_body=body, tenant_id=tenant_id, project_id=project_id,
+                    api_key_id=str(api_key_id), model=model_name or "unknown",
+                    action="rate_limited", status_code=429, latency_ms=latency_ms,
+                )
+            except Exception:
+                logger.debug("Failed to emit audit event", exc_info=True)
+
             return JSONResponse(
                 status_code=429,
                 content={
@@ -96,18 +125,46 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 headers={"Retry-After": str(rate_result.get("retry_after", 60))},
             )
 
-    logger.info(
-        "Proxying request path=/v1/%s tenant=%s project=%s method=%s model=%s",
-        path, tenant_id, project_id, request.method, model_name or "unknown",
-    )
+    # ── Multi-provider routing ──
+    provider = resolve_provider(model_name) if model_name else None
 
-    # ── Proxy to upstream ──
-    response = await proxy_request(request, target_url)
+    if provider:
+        provider_name = provider.provider_name
+        logger.info(
+            "Routing request path=/v1/%s model=%s -> provider=%s tenant=%s project=%s",
+            path, model_name, provider_name, tenant_id, project_id,
+        )
+        response = await route_request(request, body, model_name, provider)
+    else:
+        # Fallback: proxy directly to default provider (backward compatible)
+        target_url = settings.default_provider_url
+        logger.info(
+            "Proxying request path=/v1/%s tenant=%s project=%s method=%s model=%s (default provider)",
+            path, tenant_id, project_id, request.method, model_name or "unknown",
+        )
+        response = await proxy_request(request, target_url)
+
+    # ── Audit event emission ──
+    latency_ms = (time.time() - start_time) * 1000
+    try:
+        await emit_audit_event(
+            request_body=body,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            api_key_id=str(api_key_id) if api_key_id else "",
+            model=model_name or "unknown",
+            provider=provider_name,
+            action=audit_action,
+            status_code=response.status_code,
+            latency_ms=latency_ms,
+            prompt_tokens=estimated_tokens,
+        )
+    except Exception:
+        logger.debug("Failed to emit audit event", exc_info=True)
 
     # ── Token budget tracking (async, best-effort) ──
     if api_key_id and response.status_code == 200:
         try:
-            # For non-streaming responses, try to extract usage from response
             if hasattr(response, "body"):
                 resp_data = json.loads(response.body)
                 usage = resp_data.get("usage", {})
@@ -123,7 +180,6 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                     total_tokens=total_tokens,
                 )
 
-                # Persist to Postgres asynchronously
                 try:
                     async with async_session() as db:
                         await persist_usage_to_db(

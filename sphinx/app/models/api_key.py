@@ -90,6 +90,32 @@ class PolicyRule(Base):
     )
 
 
+class AuditLog(Base):
+    """Audit log for all gateway enforcement events."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    request_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    project_id: Mapped[str] = mapped_column(String(64), default="")
+    api_key_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    model: Mapped[str] = mapped_column(String(128), default="")
+    provider: Mapped[str] = mapped_column(String(64), default="")
+    action: Mapped[str] = mapped_column(String(32), default="allowed")  # allowed, blocked, rerouted, rate_limited
+    policy_version: Mapped[str] = mapped_column(String(64), default="")
+    status_code: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[str] = mapped_column(String(4096), default="{}")
+    event_timestamp: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ProviderCredential(Base):
     __tablename__ = "provider_credentials"
 

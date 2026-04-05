@@ -1,0 +1,44 @@
+import React from 'react';
+import { Outlet, Link, useLocation } from 'react-router-dom';
+import { useAuth } from './AuthContext';
+
+const styles = {
+    container: { display: 'flex', minHeight: '100vh' },
+    sidebar: {
+        width: 220, background: '#1a1a2e', color: '#eee', padding: '24px 0',
+        display: 'flex', flexDirection: 'column',
+    },
+    brand: { fontSize: 20, fontWeight: 700, padding: '0 20px 24px', borderBottom: '1px solid #333' },
+    nav: { flex: 1, padding: '16px 0' },
+    navLink: (active) => ({
+        display: 'block', padding: '10px 20px', color: active ? '#4fc3f7' : '#ccc',
+        textDecoration: 'none', background: active ? '#16213e' : 'transparent',
+        fontWeight: active ? 600 : 400,
+    }),
+    main: { flex: 1, background: '#f5f5f5', padding: 32 },
+    logoutBtn: {
+        margin: '16px 20px', padding: '8px 16px', background: '#e74c3c', color: '#fff',
+        border: 'none', borderRadius: 4, cursor: 'pointer',
+    },
+};
+
+export default function Layout() {
+    const { logout } = useAuth();
+    const location = useLocation();
+
+    return (
+        <div style={styles.container}>
+            <aside style={styles.sidebar}>
+                <div style={styles.brand}>Sphinx Admin</div>
+                <nav style={styles.nav}>
+                    <Link to="/" style={styles.navLink(location.pathname === '/')}>Dashboard</Link>
+                    <Link to="/keys" style={styles.navLink(location.pathname === '/keys')}>API Keys</Link>
+                </nav>
+                <button style={styles.logoutBtn} onClick={logout}>Logout</button>
+            </aside>
+            <main style={styles.main}>
+                <Outlet />
+            </main>
+        </div>
+    );
+}
