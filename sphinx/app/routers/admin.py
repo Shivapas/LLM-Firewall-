@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -1014,3 +1014,316 @@ async def tier2_status():
         "tier2_enabled": engine.tier2_enabled,
         "index_size": tier2.index_size,
     }
+
+
+# ── Sprint 8: Vector DB Proxy & Namespace Isolation ────────────────────
+
+from app.services.vectordb.proxy import (
+    get_vectordb_proxy,
+    CollectionPolicy,
+    VectorDBProvider,
+    VectorOperation,
+    ProxyAction,
+    ProxyRequest,
+)
+from app.services.vectordb.namespace_isolator import get_namespace_isolator
+
+
+class CreateVectorCollectionRequest(BaseModel):
+    collection_name: str
+    provider: str = "chromadb"
+    default_action: str = "deny"
+    allowed_operations: list[str] = []
+    sensitive_fields: list[str] = []
+    namespace_field: str = "tenant_id"
+    max_results: int = 10
+    tenant_id: str = "*"
+
+
+class VectorCollectionInfo(BaseModel):
+    id: str
+    collection_name: str
+    provider: str
+    default_action: str
+    allowed_operations: list[str]
+    sensitive_fields: list[str]
+    namespace_field: str
+    max_results: int
+    is_active: bool
+    tenant_id: str
+    created_at: Optional[datetime]
+
+
+class UpdateVectorCollectionRequest(BaseModel):
+    default_action: Optional[str] = None
+    allowed_operations: Optional[list[str]] = None
+    sensitive_fields: Optional[list[str]] = None
+    namespace_field: Optional[str] = None
+    max_results: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+@router.post("/vector-collections", response_model=VectorCollectionInfo)
+async def create_vector_collection(
+    body: CreateVectorCollectionRequest, db: AsyncSession = Depends(get_db)
+):
+    """Register a new vector collection with per-collection access policy."""
+    valid_providers = {"chromadb", "pinecone", "milvus"}
+    if body.provider not in valid_providers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid provider. Must be one of: {valid_providers}",
+        )
+
+    valid_actions = {"deny", "allow", "monitor"}
+    if body.default_action not in valid_actions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid default_action. Must be one of: {valid_actions}",
+        )
+
+    valid_ops = {"query", "insert", "update", "delete"}
+    for op in body.allowed_operations:
+        if op not in valid_ops:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid operation '{op}'. Must be one of: {valid_ops}",
+            )
+
+    if body.max_results < 1 or body.max_results > 100:
+        raise HTTPException(
+            status_code=400, detail="max_results must be between 1 and 100"
+        )
+
+    # Check uniqueness
+    existing = await db.execute(
+        select(VectorCollectionPolicy).where(
+            VectorCollectionPolicy.collection_name == body.collection_name
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Collection '{body.collection_name}' already registered",
+        )
+
+    policy = VectorCollectionPolicy(
+        id=uuid.uuid4(),
+        collection_name=body.collection_name,
+        provider=body.provider,
+        default_action=body.default_action,
+        allowed_operations=body.allowed_operations,
+        sensitive_fields=body.sensitive_fields,
+        namespace_field=body.namespace_field,
+        max_results=body.max_results,
+        tenant_id=body.tenant_id,
+    )
+    db.add(policy)
+    await db.commit()
+    await db.refresh(policy)
+
+    # Register in the in-memory proxy
+    _sync_policy_to_proxy(policy)
+
+    return _vector_collection_to_info(policy)
+
+
+@router.get("/vector-collections", response_model=list[VectorCollectionInfo])
+async def list_vector_collections(db: AsyncSession = Depends(get_db)):
+    """List all registered vector collection policies."""
+    result = await db.execute(
+        select(VectorCollectionPolicy).order_by(
+            VectorCollectionPolicy.created_at.desc()
+        )
+    )
+    policies = result.scalars().all()
+    return [_vector_collection_to_info(p) for p in policies]
+
+
+@router.get("/vector-collections/{collection_id}", response_model=VectorCollectionInfo)
+async def get_vector_collection(
+    collection_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+):
+    """Get a specific vector collection policy by ID."""
+    result = await db.execute(
+        select(VectorCollectionPolicy).where(
+            VectorCollectionPolicy.id == collection_id
+        )
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Vector collection policy not found")
+    return _vector_collection_to_info(policy)
+
+
+@router.patch("/vector-collections/{collection_id}", response_model=VectorCollectionInfo)
+async def update_vector_collection(
+    collection_id: uuid.UUID,
+    body: UpdateVectorCollectionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a vector collection policy."""
+    result = await db.execute(
+        select(VectorCollectionPolicy).where(
+            VectorCollectionPolicy.id == collection_id
+        )
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Vector collection policy not found")
+
+    if body.default_action is not None:
+        valid_actions = {"deny", "allow", "monitor"}
+        if body.default_action not in valid_actions:
+            raise HTTPException(status_code=400, detail=f"Invalid default_action. Must be one of: {valid_actions}")
+        policy.default_action = body.default_action
+
+    if body.allowed_operations is not None:
+        valid_ops = {"query", "insert", "update", "delete"}
+        for op in body.allowed_operations:
+            if op not in valid_ops:
+                raise HTTPException(status_code=400, detail=f"Invalid operation '{op}'.")
+        policy.allowed_operations = body.allowed_operations
+
+    if body.sensitive_fields is not None:
+        policy.sensitive_fields = body.sensitive_fields
+    if body.namespace_field is not None:
+        policy.namespace_field = body.namespace_field
+    if body.max_results is not None:
+        if body.max_results < 1 or body.max_results > 100:
+            raise HTTPException(status_code=400, detail="max_results must be between 1 and 100")
+        policy.max_results = body.max_results
+    if body.is_active is not None:
+        policy.is_active = body.is_active
+
+    await db.commit()
+    await db.refresh(policy)
+
+    # Update in-memory proxy
+    _sync_policy_to_proxy(policy)
+
+    return _vector_collection_to_info(policy)
+
+
+@router.delete("/vector-collections/{collection_id}")
+async def delete_vector_collection(
+    collection_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+):
+    """Delete a vector collection policy."""
+    result = await db.execute(
+        select(VectorCollectionPolicy).where(
+            VectorCollectionPolicy.id == collection_id
+        )
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Vector collection policy not found")
+
+    # Remove from in-memory proxy
+    proxy = get_vectordb_proxy()
+    proxy.remove_policy(policy.collection_name)
+
+    await db.delete(policy)
+    await db.commit()
+    return {"status": "deleted", "collection_id": str(collection_id)}
+
+
+class VectorDBProxyTestRequest(BaseModel):
+    collection_name: str
+    operation: str = "query"
+    tenant_id: str = "test-tenant"
+    top_k: int = 10
+    filters: dict = {}
+
+
+@router.post("/vector-proxy/test")
+async def vector_proxy_test(body: VectorDBProxyTestRequest):
+    """Test the vector DB proxy enforcement against a sample request."""
+    try:
+        op = VectorOperation(body.operation)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid operation. Must be one of: query, insert, update, delete",
+        )
+
+    proxy = get_vectordb_proxy()
+    request = ProxyRequest(
+        collection_name=body.collection_name,
+        operation=op,
+        tenant_id=body.tenant_id,
+        top_k=body.top_k,
+        filters=body.filters,
+    )
+    result = proxy.process(request)
+    return result.to_dict()
+
+
+@router.get("/vector-proxy/status")
+async def vector_proxy_status():
+    """Get vector DB proxy status and statistics."""
+    proxy = get_vectordb_proxy()
+    policies = proxy.list_policies()
+    return {
+        "stats": proxy.get_stats(),
+        "registered_collections": len(policies),
+        "collections": [
+            {
+                "collection_name": p.collection_name,
+                "provider": p.provider.value if isinstance(p.provider, VectorDBProvider) else p.provider,
+                "default_action": p.default_action.value if isinstance(p.default_action, ProxyAction) else p.default_action,
+                "is_active": p.is_active,
+            }
+            for p in policies
+        ],
+    }
+
+
+def _vector_collection_to_info(policy: VectorCollectionPolicy) -> VectorCollectionInfo:
+    return VectorCollectionInfo(
+        id=str(policy.id),
+        collection_name=policy.collection_name,
+        provider=policy.provider,
+        default_action=policy.default_action,
+        allowed_operations=policy.allowed_operations or [],
+        sensitive_fields=policy.sensitive_fields or [],
+        namespace_field=policy.namespace_field,
+        max_results=policy.max_results,
+        is_active=policy.is_active,
+        tenant_id=policy.tenant_id,
+        created_at=policy.created_at,
+    )
+
+
+def _sync_policy_to_proxy(db_policy: VectorCollectionPolicy) -> None:
+    """Sync a DB policy record to the in-memory vector DB proxy."""
+    proxy = get_vectordb_proxy()
+    try:
+        provider = VectorDBProvider(db_policy.provider)
+    except ValueError:
+        provider = VectorDBProvider.CHROMADB
+
+    try:
+        default_action = ProxyAction(db_policy.default_action)
+    except ValueError:
+        default_action = ProxyAction.DENY
+
+    ops = []
+    for op_str in (db_policy.allowed_operations or []):
+        try:
+            ops.append(VectorOperation(op_str))
+        except ValueError:
+            pass
+
+    policy = CollectionPolicy(
+        collection_name=db_policy.collection_name,
+        provider=provider,
+        default_action=default_action,
+        allowed_operations=ops,
+        sensitive_fields=db_policy.sensitive_fields or [],
+        namespace_field=db_policy.namespace_field,
+        max_results=db_policy.max_results,
+        is_active=db_policy.is_active,
+        tenant_id=db_policy.tenant_id,
+    )
+    proxy.register_policy(policy)
