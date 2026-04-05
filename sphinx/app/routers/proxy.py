@@ -148,16 +148,18 @@ async def gateway_proxy(request: Request, path: str) -> Response:
             tenant_id,
         )
 
-    # ── Tier 1 Threat Detection + Data Shield (parallel) ──
+    # ── Tier 1 + Tier 2 Threat Detection + Data Shield (parallel) ──
     threat_engine = get_threat_engine()
     data_shield = get_data_shield_engine()
 
-    threat_future = loop.run_in_executor(_scan_executor, threat_engine.scan_request_body, body)
+    threat_future = loop.run_in_executor(
+        _scan_executor, threat_engine.scan_request_body_with_escalation, body,
+    )
     shield_future = loop.run_in_executor(
         _scan_executor, lambda: data_shield.scan_request_body(body),
     )
 
-    threat_result, (shielded_body, shield_result) = await asyncio.gather(
+    (threat_result, escalation_decision), (shielded_body, shield_result) = await asyncio.gather(
         threat_future, shield_future,
     )
 
@@ -173,10 +175,21 @@ async def gateway_proxy(request: Request, path: str) -> Response:
             tenant_id,
         )
 
+    # Build audit metadata for escalation
+    threat_metadata = {
+        "reason": threat_result.reason,
+        "risk_level": threat_result.risk_level,
+        "score": threat_result.score,
+        "matched_patterns": threat_result.matched_patterns or [],
+    }
+    if escalation_decision:
+        threat_metadata["escalation"] = escalation_decision.to_dict()
+
     if threat_result.action == "block":
         logger.warning(
-            "Threat detection BLOCKED request tenant=%s risk=%s score=%.3f reason=%s",
+            "Threat detection BLOCKED request tenant=%s risk=%s score=%.3f reason=%s escalated=%s",
             tenant_id, threat_result.risk_level, threat_result.score, threat_result.reason,
+            escalation_decision.escalated_to_tier2 if escalation_decision else False,
         )
         latency_ms = (time.time() - start_time) * 1000
         try:
@@ -185,12 +198,7 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 api_key_id=str(api_key_id) if api_key_id else "",
                 model=model_name or "unknown", action="blocked_threat",
                 status_code=403, latency_ms=latency_ms,
-                metadata={
-                    "reason": threat_result.reason,
-                    "risk_level": threat_result.risk_level,
-                    "score": threat_result.score,
-                    "matched_patterns": threat_result.matched_patterns or [],
-                },
+                metadata=threat_metadata,
             )
         except Exception:
             logger.debug("Failed to emit audit event", exc_info=True)

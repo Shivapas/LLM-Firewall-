@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -249,6 +249,8 @@ class PolicyInfo(BaseModel):
 @router.post("/policies", response_model=PolicyInfo)
 async def create_policy(body: CreatePolicyRequest, db: AsyncSession = Depends(get_db)):
     """Create a new policy rule."""
+    from app.services.policy_versioning import create_policy_snapshot
+
     policy = PolicyRule(
         id=uuid.uuid4(),
         name=body.name,
@@ -259,6 +261,12 @@ async def create_policy(body: CreatePolicyRequest, db: AsyncSession = Depends(ge
     db.add(policy)
     await db.commit()
     await db.refresh(policy)
+
+    # Create initial version snapshot
+    await create_policy_snapshot(
+        db, policy.id, policy.rules_json,
+        description="Initial version",
+    )
 
     # Refresh the in-memory policy cache
     await force_refresh(db)
@@ -325,6 +333,8 @@ async def update_policy(
     policy_id: uuid.UUID, body: UpdatePolicyRequest, db: AsyncSession = Depends(get_db)
 ):
     """Update a policy rule."""
+    from app.services.policy_versioning import create_policy_snapshot
+
     result = await db.execute(select(PolicyRule).where(PolicyRule.id == policy_id))
     rule = result.scalar_one_or_none()
     if rule is None:
@@ -340,6 +350,13 @@ async def update_policy(
 
     await db.commit()
     await db.refresh(rule)
+
+    # Create version snapshot on rules change
+    if body.rules is not None:
+        await create_policy_snapshot(
+            db, policy_id, rule.rules_json,
+            description=f"Updated to version {rule.version}",
+        )
 
     await force_refresh(db)
 
@@ -863,3 +880,137 @@ async def rag_pipeline_test(req: RAGClassifyRequest):
     body_bytes = json.dumps(req.body).encode()
     _, result = pipeline.process(body_bytes, tenant_id="test")
     return result.to_dict()
+
+
+# ── Sprint 7: Policy Version Management ──────────────────────────────
+
+from app.services.policy_versioning import (
+    list_policy_versions,
+    get_policy_version,
+    diff_policy_versions,
+    rollback_policy,
+    simulate_policy,
+)
+from app.services.threat_detection.tier2_scanner import get_tier2_scanner
+from app.services.threat_detection.escalation_gate import get_escalation_gate
+
+
+class PolicyVersionInfo(BaseModel):
+    id: str
+    policy_id: str
+    version: int
+    name: str
+    description: str
+    policy_type: str
+    rules: dict
+    created_by: str
+    created_at: Optional[str]
+
+
+@router.get("/policies/{policy_id}/versions", response_model=list[PolicyVersionInfo])
+async def list_versions(policy_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """List all version snapshots for a policy."""
+    versions = await list_policy_versions(db, policy_id)
+    return [PolicyVersionInfo(**v) for v in versions]
+
+
+@router.get("/policies/{policy_id}/versions/{version}", response_model=PolicyVersionInfo)
+async def get_version(
+    policy_id: uuid.UUID, version: int, db: AsyncSession = Depends(get_db)
+):
+    """Get a specific version snapshot."""
+    ver = await get_policy_version(db, policy_id, version)
+    if not ver:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+    return PolicyVersionInfo(**ver)
+
+
+class PolicyDiffRequest(BaseModel):
+    version_a: int
+    version_b: int
+
+
+@router.post("/policies/{policy_id}/diff")
+async def diff_versions(
+    policy_id: uuid.UUID, body: PolicyDiffRequest, db: AsyncSession = Depends(get_db)
+):
+    """Compute diff between two policy versions."""
+    try:
+        diff = await diff_policy_versions(db, policy_id, body.version_a, body.version_b)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return diff
+
+
+class PolicyRollbackRequest(BaseModel):
+    target_version: int
+    rolled_back_by: str = "admin"
+
+
+@router.post("/policies/{policy_id}/rollback")
+async def rollback_version(
+    policy_id: uuid.UUID, body: PolicyRollbackRequest, db: AsyncSession = Depends(get_db)
+):
+    """Rollback a policy to a previous version. Propagates to gateway in < 5s."""
+    try:
+        result = await rollback_policy(
+            db, policy_id, body.target_version, body.rolled_back_by,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return result
+
+
+class PolicySimulationRequest(BaseModel):
+    rules: dict
+    limit: int = 100
+
+
+@router.post("/policies/{policy_id}/simulate")
+async def simulate_policy_endpoint(
+    policy_id: uuid.UUID, body: PolicySimulationRequest, db: AsyncSession = Depends(get_db)
+):
+    """Simulate a policy against recent request log (dry-run).
+
+    Preview which requests would be blocked/rewritten before activation.
+    """
+    try:
+        result = await simulate_policy(db, policy_id, body.rules, body.limit)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return result
+
+
+# ── Sprint 7: Tier 2 ML Scanner Endpoints ────────────────────────────
+
+
+@router.post("/threat-engine/scan-tier2")
+async def scan_test_tier2(body: ScanTestRequest):
+    """Test the Tier 2 ML semantic scanner against sample text."""
+    tier2 = get_tier2_scanner()
+    result = tier2.scan(body.text)
+    return result.to_dict()
+
+
+@router.post("/threat-engine/scan-escalation")
+async def scan_test_escalation(body: ScanTestRequest):
+    """Test full Tier 1 + Tier 2 escalation pipeline against sample text."""
+    engine = get_threat_engine()
+    action_result, escalation = engine.evaluate_with_escalation(body.text)
+    result = {
+        "action": action_result.to_dict(),
+    }
+    if escalation:
+        result["escalation"] = escalation.to_dict()
+    return result
+
+
+@router.get("/threat-engine/tier2-status")
+async def tier2_status():
+    """Get Tier 2 ML semantic scanner status."""
+    tier2 = get_tier2_scanner()
+    engine = get_threat_engine()
+    return {
+        "tier2_enabled": engine.tier2_enabled,
+        "index_size": tier2.index_size,
+    }
