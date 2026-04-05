@@ -17,6 +17,8 @@ from app.services.routing import resolve_provider, route_request
 from app.services.audit import emit_audit_event
 from app.services.threat_detection.engine import get_threat_engine
 from app.services.data_shield.engine import get_data_shield_engine
+from app.services.rag.pipeline import get_rag_pipeline
+from app.services.rag.classifier import RequestType
 from app.services.database import async_session
 from app.config import get_settings
 
@@ -102,11 +104,54 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 body = json.dumps(payload).encode()
                 model_name = ks["fallback_model"]
 
+    # ── RAG Pipeline Classification & Query Firewall ──
+    rag_pipeline = get_rag_pipeline()
+    loop = asyncio.get_event_loop()
+    rag_body, rag_result = await loop.run_in_executor(
+        _scan_executor,
+        lambda: rag_pipeline.process(body, tenant_id=tenant_id),
+    )
+
+    if not rag_result.allowed:
+        logger.warning(
+            "RAG pipeline BLOCKED request tenant=%s reason=%s",
+            tenant_id, rag_result.blocked_reason,
+        )
+        latency_ms = (time.time() - start_time) * 1000
+        try:
+            await emit_audit_event(
+                request_body=body, tenant_id=tenant_id, project_id=project_id,
+                api_key_id=str(api_key_id) if api_key_id else "",
+                model=model_name or "unknown", action="blocked_rag",
+                status_code=403, latency_ms=latency_ms,
+                metadata={"reason": rag_result.blocked_reason, "rag": rag_result.to_dict()},
+            )
+        except Exception:
+            logger.debug("Failed to emit audit event", exc_info=True)
+
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Request blocked by RAG security policy",
+                "reason": rag_result.blocked_reason,
+                "classification": rag_result.classification.to_dict(),
+            },
+        )
+
+    # If RAG pipeline modified the body (PII redaction in query), use modified body
+    if rag_result.classification.request_type == RequestType.RAG_QUERY:
+        body = rag_body
+        logger.info(
+            "RAG query processed: type=%s intent=%s tenant=%s",
+            rag_result.classification.request_type.value,
+            rag_result.intent.intent.value if rag_result.intent else "n/a",
+            tenant_id,
+        )
+
     # ── Tier 1 Threat Detection + Data Shield (parallel) ──
     threat_engine = get_threat_engine()
     data_shield = get_data_shield_engine()
 
-    loop = asyncio.get_event_loop()
     threat_future = loop.run_in_executor(_scan_executor, threat_engine.scan_request_body, body)
     shield_future = loop.run_in_executor(
         _scan_executor, lambda: data_shield.scan_request_body(body),
@@ -226,6 +271,8 @@ async def gateway_proxy(request: Request, path: str) -> Response:
     # ── Audit event emission ──
     latency_ms = (time.time() - start_time) * 1000
     audit_metadata = {}
+    if rag_result.classification.request_type == RequestType.RAG_QUERY:
+        audit_metadata["rag"] = rag_result.to_dict()
     if shield_result and shield_result.redaction and shield_result.redaction.redaction_count > 0:
         audit_metadata["data_shield"] = shield_result.to_dict()
     try:

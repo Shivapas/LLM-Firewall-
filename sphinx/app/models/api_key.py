@@ -149,6 +149,43 @@ class SecurityRule(Base):
     )
 
 
+class RAGPolicyConfig(Base):
+    """Per-stage policy configuration for RAG pipelines."""
+    __tablename__ = "rag_policy_configs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    # Stage-specific enforcement toggles
+    query_stage_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    retrieval_stage_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    generator_stage_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Query stage config
+    query_threat_detection: Mapped[bool] = mapped_column(Boolean, default=True)
+    query_pii_redaction: Mapped[bool] = mapped_column(Boolean, default=True)
+    query_intent_classification: Mapped[bool] = mapped_column(Boolean, default=True)
+    block_high_risk_intents: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Retrieval stage config
+    max_chunks: Mapped[int] = mapped_column(Integer, default=10)
+    max_tokens_per_chunk: Mapped[int] = mapped_column(Integer, default=512)
+    scan_retrieved_chunks: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Generator stage config
+    generator_pii_redaction: Mapped[bool] = mapped_column(Boolean, default=True)
+    generator_threat_detection: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Metadata
+    rules_json: Mapped[str] = mapped_column(Text, default="{}")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="*")  # * = global
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ProviderCredential(Base):
     __tablename__ = "provider_credentials"
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -626,3 +626,240 @@ async def scan_test(body: ScanTestRequest):
         "threat_score": threat_score.to_dict(),
         "action": action_result.to_dict(),
     }
+
+
+# ── RAG Pipeline Endpoints (Sprint 6) ─────────────────────────────────
+
+from app.services.rag.classifier import get_rag_classifier
+from app.services.rag.query_firewall import get_query_firewall
+from app.services.rag.intent_classifier import get_intent_classifier
+from app.services.rag.pipeline import get_rag_pipeline
+
+
+class CreateRAGPolicyRequest(BaseModel):
+    name: str
+    description: str = ""
+    query_stage_enabled: bool = True
+    retrieval_stage_enabled: bool = True
+    generator_stage_enabled: bool = True
+    query_threat_detection: bool = True
+    query_pii_redaction: bool = True
+    query_intent_classification: bool = True
+    block_high_risk_intents: bool = False
+    max_chunks: int = 10
+    max_tokens_per_chunk: int = 512
+    scan_retrieved_chunks: bool = True
+    generator_pii_redaction: bool = True
+    generator_threat_detection: bool = True
+    rules: dict = {}
+    tenant_id: str = "*"
+
+
+class RAGPolicyInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    query_stage_enabled: bool
+    retrieval_stage_enabled: bool
+    generator_stage_enabled: bool
+    query_threat_detection: bool
+    query_pii_redaction: bool
+    query_intent_classification: bool
+    block_high_risk_intents: bool
+    max_chunks: int
+    max_tokens_per_chunk: int
+    scan_retrieved_chunks: bool
+    generator_pii_redaction: bool
+    generator_threat_detection: bool
+    rules: dict
+    is_active: bool
+    tenant_id: str
+    created_at: Optional[datetime]
+
+
+@router.post("/rag-policies", response_model=RAGPolicyInfo)
+async def create_rag_policy(body: CreateRAGPolicyRequest, db: AsyncSession = Depends(get_db)):
+    """Create a new RAG pipeline policy configuration."""
+    policy = RAGPolicyConfig(
+        id=uuid.uuid4(),
+        name=body.name,
+        description=body.description,
+        query_stage_enabled=body.query_stage_enabled,
+        retrieval_stage_enabled=body.retrieval_stage_enabled,
+        generator_stage_enabled=body.generator_stage_enabled,
+        query_threat_detection=body.query_threat_detection,
+        query_pii_redaction=body.query_pii_redaction,
+        query_intent_classification=body.query_intent_classification,
+        block_high_risk_intents=body.block_high_risk_intents,
+        max_chunks=body.max_chunks,
+        max_tokens_per_chunk=body.max_tokens_per_chunk,
+        scan_retrieved_chunks=body.scan_retrieved_chunks,
+        generator_pii_redaction=body.generator_pii_redaction,
+        generator_threat_detection=body.generator_threat_detection,
+        rules_json=json.dumps(body.rules),
+        tenant_id=body.tenant_id,
+    )
+    db.add(policy)
+    await db.commit()
+    await db.refresh(policy)
+
+    return _rag_policy_to_info(policy)
+
+
+@router.get("/rag-policies", response_model=list[RAGPolicyInfo])
+async def list_rag_policies(db: AsyncSession = Depends(get_db)):
+    """List all RAG pipeline policy configurations."""
+    result = await db.execute(
+        select(RAGPolicyConfig).order_by(RAGPolicyConfig.created_at.desc())
+    )
+    policies = result.scalars().all()
+    return [_rag_policy_to_info(p) for p in policies]
+
+
+@router.get("/rag-policies/{policy_id}", response_model=RAGPolicyInfo)
+async def get_rag_policy(policy_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Get a specific RAG policy by ID."""
+    result = await db.execute(
+        select(RAGPolicyConfig).where(RAGPolicyConfig.id == policy_id)
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="RAG policy not found")
+    return _rag_policy_to_info(policy)
+
+
+class UpdateRAGPolicyRequest(BaseModel):
+    description: Optional[str] = None
+    query_stage_enabled: Optional[bool] = None
+    retrieval_stage_enabled: Optional[bool] = None
+    generator_stage_enabled: Optional[bool] = None
+    query_threat_detection: Optional[bool] = None
+    query_pii_redaction: Optional[bool] = None
+    query_intent_classification: Optional[bool] = None
+    block_high_risk_intents: Optional[bool] = None
+    max_chunks: Optional[int] = None
+    max_tokens_per_chunk: Optional[int] = None
+    scan_retrieved_chunks: Optional[bool] = None
+    generator_pii_redaction: Optional[bool] = None
+    generator_threat_detection: Optional[bool] = None
+    rules: Optional[dict] = None
+    is_active: Optional[bool] = None
+
+
+@router.patch("/rag-policies/{policy_id}", response_model=RAGPolicyInfo)
+async def update_rag_policy(
+    policy_id: uuid.UUID, body: UpdateRAGPolicyRequest, db: AsyncSession = Depends(get_db)
+):
+    """Update a RAG pipeline policy."""
+    result = await db.execute(
+        select(RAGPolicyConfig).where(RAGPolicyConfig.id == policy_id)
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="RAG policy not found")
+
+    for field_name in (
+        "description", "query_stage_enabled", "retrieval_stage_enabled",
+        "generator_stage_enabled", "query_threat_detection", "query_pii_redaction",
+        "query_intent_classification", "block_high_risk_intents", "max_chunks",
+        "max_tokens_per_chunk", "scan_retrieved_chunks", "generator_pii_redaction",
+        "generator_threat_detection", "is_active",
+    ):
+        val = getattr(body, field_name, None)
+        if val is not None:
+            setattr(policy, field_name, val)
+
+    if body.rules is not None:
+        policy.rules_json = json.dumps(body.rules)
+
+    await db.commit()
+    await db.refresh(policy)
+    return _rag_policy_to_info(policy)
+
+
+@router.delete("/rag-policies/{policy_id}")
+async def delete_rag_policy(policy_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Delete a RAG pipeline policy."""
+    result = await db.execute(
+        select(RAGPolicyConfig).where(RAGPolicyConfig.id == policy_id)
+    )
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="RAG policy not found")
+    await db.delete(policy)
+    await db.commit()
+    return {"status": "deleted", "policy_id": str(policy_id)}
+
+
+def _rag_policy_to_info(policy: RAGPolicyConfig) -> RAGPolicyInfo:
+    return RAGPolicyInfo(
+        id=str(policy.id),
+        name=policy.name,
+        description=policy.description,
+        query_stage_enabled=policy.query_stage_enabled,
+        retrieval_stage_enabled=policy.retrieval_stage_enabled,
+        generator_stage_enabled=policy.generator_stage_enabled,
+        query_threat_detection=policy.query_threat_detection,
+        query_pii_redaction=policy.query_pii_redaction,
+        query_intent_classification=policy.query_intent_classification,
+        block_high_risk_intents=policy.block_high_risk_intents,
+        max_chunks=policy.max_chunks,
+        max_tokens_per_chunk=policy.max_tokens_per_chunk,
+        scan_retrieved_chunks=policy.scan_retrieved_chunks,
+        generator_pii_redaction=policy.generator_pii_redaction,
+        generator_threat_detection=policy.generator_threat_detection,
+        rules=json.loads(policy.rules_json) if policy.rules_json else {},
+        is_active=policy.is_active,
+        tenant_id=policy.tenant_id,
+        created_at=policy.created_at,
+    )
+
+
+# ── RAG Pipeline Test Endpoints ────────────────────────────────────────
+
+
+class RAGClassifyRequest(BaseModel):
+    body: dict
+
+
+@router.post("/rag-pipeline/classify")
+async def rag_classify_test(req: RAGClassifyRequest):
+    """Test the RAG request classifier against a sample payload."""
+    classifier = get_rag_classifier()
+    body_bytes = json.dumps(req.body).encode()
+    result = classifier.classify(body_bytes)
+    return result.to_dict()
+
+
+class RAGQueryScanRequest(BaseModel):
+    query: str
+    tenant_id: str = ""
+
+
+@router.post("/rag-pipeline/scan-query")
+async def rag_scan_query_test(req: RAGQueryScanRequest):
+    """Test the RAG query firewall against a sample query."""
+    firewall = get_query_firewall()
+    result = firewall.scan_query(req.query, tenant_id=req.tenant_id)
+    return result.to_dict()
+
+
+class RAGIntentRequest(BaseModel):
+    query: str
+
+
+@router.post("/rag-pipeline/classify-intent")
+async def rag_intent_test(req: RAGIntentRequest):
+    """Test the intent classifier against a sample query."""
+    classifier = get_intent_classifier()
+    result = classifier.classify(req.query)
+    return result.to_dict()
+
+
+@router.post("/rag-pipeline/process")
+async def rag_pipeline_test(req: RAGClassifyRequest):
+    """Test the full RAG pipeline against a sample payload."""
+    pipeline = get_rag_pipeline()
+    body_bytes = json.dumps(req.body).encode()
+    _, result = pipeline.process(body_bytes, tenant_id="test")
+    return result.to_dict()
