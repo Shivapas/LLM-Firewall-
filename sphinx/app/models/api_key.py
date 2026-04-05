@@ -205,6 +205,38 @@ class PolicyVersionSnapshot(Base):
     )
 
 
+class VectorCollectionPolicy(Base):
+    """Per-collection access policy for vector DB proxy enforcement."""
+    __tablename__ = "vector_collection_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    collection_name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(
+        String(64), default="chromadb"
+    )  # chromadb, pinecone, milvus
+    default_action: Mapped[str] = mapped_column(
+        String(16), default="deny"
+    )  # deny, allow, monitor
+    allowed_operations: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list
+    )  # query, insert, update, delete
+    sensitive_fields: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list
+    )
+    namespace_field: Mapped[str] = mapped_column(String(128), default="tenant_id")
+    max_results: Mapped[int] = mapped_column(Integer, default=10)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="*")  # * = global
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ProviderCredential(Base):
     __tablename__ = "provider_credentials"
 

@@ -36,6 +36,7 @@ export default function Layout() {
                     <Link to="/policies" style={styles.navLink(location.pathname === '/policies')}>Security Policies</Link>
                     <Link to="/rag-policies" style={styles.navLink(location.pathname === '/rag-policies')}>RAG Policies</Link>
                     <Link to="/policy-versions" style={styles.navLink(location.pathname === '/policy-versions')}>Policy Versions</Link>
+                    <Link to="/vector-db" style={styles.navLink(location.pathname === '/vector-db')}>Vector DB</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>
