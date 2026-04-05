@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Integer, Float, DateTime, Boolean, func
+from sqlalchemy import String, Integer, Float, DateTime, Boolean, Text, func
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -113,6 +113,39 @@ class AuditLog(Base):
     event_timestamp: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SecurityRule(Base):
+    """Security rule for threat detection — configurable per-tenant patterns."""
+    __tablename__ = "security_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(128), index=True)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    category: Mapped[str] = mapped_column(
+        String(64), default="prompt_injection"
+    )  # prompt_injection, jailbreak, data_extraction, etc.
+    severity: Mapped[str] = mapped_column(
+        String(16), default="medium"
+    )  # critical, high, medium, low
+    pattern: Mapped[str] = mapped_column(Text)  # regex pattern
+    action: Mapped[str] = mapped_column(
+        String(16), default="block"
+    )  # allow, block, rewrite, downgrade
+    rewrite_template: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    tags_json: Mapped[str] = mapped_column(String(1024), default="[]")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    stage: Mapped[str] = mapped_column(
+        String(32), default="input"
+    )  # input, output, rag
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 

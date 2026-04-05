@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -19,6 +19,8 @@ from app.services.kill_switch import (
     list_kill_switches,
 )
 from app.services.policy_cache import force_refresh, get_all_policies
+from app.services.threat_detection.engine import get_threat_engine
+from app.services.threat_detection.pattern_library import ThreatPattern
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -367,4 +369,260 @@ async def policy_cache_status():
     return {
         "cached_policies": len(policies),
         "policy_names": list(policies.keys()),
+    }
+
+
+# ── Security Rule Endpoints (Sprint 4 — Threat Detection) ────────────
+
+
+class CreateSecurityRuleRequest(BaseModel):
+    name: str
+    description: str = ""
+    category: str = "prompt_injection"
+    severity: str = "medium"
+    pattern: str
+    action: str = "block"
+    rewrite_template: Optional[str] = None
+    tags: list[str] = []
+    stage: str = "input"
+
+
+class SecurityRuleInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    category: str
+    severity: str
+    pattern: str
+    action: str
+    rewrite_template: Optional[str]
+    tags: list[str]
+    is_active: bool
+    stage: str
+    created_at: Optional[datetime]
+
+
+@router.post("/security-rules", response_model=SecurityRuleInfo)
+async def create_security_rule(
+    body: CreateSecurityRuleRequest, db: AsyncSession = Depends(get_db)
+):
+    """Create a new security rule for threat detection."""
+    import re as re_module
+    # Validate regex pattern
+    try:
+        re_module.compile(body.pattern)
+    except re_module.error as e:
+        raise HTTPException(status_code=400, detail=f"Invalid regex pattern: {e}")
+
+    valid_actions = {"allow", "block", "rewrite", "downgrade"}
+    if body.action not in valid_actions:
+        raise HTTPException(status_code=400, detail=f"Invalid action. Must be one of: {valid_actions}")
+
+    valid_severities = {"critical", "high", "medium", "low"}
+    if body.severity not in valid_severities:
+        raise HTTPException(status_code=400, detail=f"Invalid severity. Must be one of: {valid_severities}")
+
+    rule = SecurityRule(
+        id=uuid.uuid4(),
+        name=body.name,
+        description=body.description,
+        category=body.category,
+        severity=body.severity,
+        pattern=body.pattern,
+        action=body.action,
+        rewrite_template=body.rewrite_template,
+        tags_json=json.dumps(body.tags),
+        stage=body.stage,
+    )
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+
+    # Load into the threat engine immediately
+    engine = get_threat_engine()
+    engine.load_policy_rules([{
+        "id": f"custom-{rule.id}",
+        "name": rule.name,
+        "category": rule.category,
+        "severity": rule.severity,
+        "pattern": rule.pattern,
+        "description": rule.description,
+        "tags": body.tags,
+    }])
+
+    return SecurityRuleInfo(
+        id=str(rule.id),
+        name=rule.name,
+        description=rule.description,
+        category=rule.category,
+        severity=rule.severity,
+        pattern=rule.pattern,
+        action=rule.action,
+        rewrite_template=rule.rewrite_template,
+        tags=json.loads(rule.tags_json),
+        is_active=rule.is_active,
+        stage=rule.stage,
+        created_at=rule.created_at,
+    )
+
+
+@router.get("/security-rules", response_model=list[SecurityRuleInfo])
+async def list_security_rules(db: AsyncSession = Depends(get_db)):
+    """List all security rules."""
+    result = await db.execute(
+        select(SecurityRule).order_by(SecurityRule.created_at.desc())
+    )
+    rules = result.scalars().all()
+    return [
+        SecurityRuleInfo(
+            id=str(r.id),
+            name=r.name,
+            description=r.description,
+            category=r.category,
+            severity=r.severity,
+            pattern=r.pattern,
+            action=r.action,
+            rewrite_template=r.rewrite_template,
+            tags=json.loads(r.tags_json) if r.tags_json else [],
+            is_active=r.is_active,
+            stage=r.stage,
+            created_at=r.created_at,
+        )
+        for r in rules
+    ]
+
+
+@router.get("/security-rules/{rule_id}", response_model=SecurityRuleInfo)
+async def get_security_rule(rule_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Get a specific security rule by ID."""
+    result = await db.execute(select(SecurityRule).where(SecurityRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Security rule not found")
+    return SecurityRuleInfo(
+        id=str(rule.id),
+        name=rule.name,
+        description=rule.description,
+        category=rule.category,
+        severity=rule.severity,
+        pattern=rule.pattern,
+        action=rule.action,
+        rewrite_template=rule.rewrite_template,
+        tags=json.loads(rule.tags_json) if rule.tags_json else [],
+        is_active=rule.is_active,
+        stage=rule.stage,
+        created_at=rule.created_at,
+    )
+
+
+class UpdateSecurityRuleRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    severity: Optional[str] = None
+    pattern: Optional[str] = None
+    action: Optional[str] = None
+    rewrite_template: Optional[str] = None
+    tags: Optional[list[str]] = None
+    is_active: Optional[bool] = None
+    stage: Optional[str] = None
+
+
+@router.patch("/security-rules/{rule_id}", response_model=SecurityRuleInfo)
+async def update_security_rule(
+    rule_id: uuid.UUID, body: UpdateSecurityRuleRequest, db: AsyncSession = Depends(get_db)
+):
+    """Update a security rule."""
+    import re as re_module
+
+    result = await db.execute(select(SecurityRule).where(SecurityRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Security rule not found")
+
+    if body.pattern is not None:
+        try:
+            re_module.compile(body.pattern)
+        except re_module.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regex pattern: {e}")
+        rule.pattern = body.pattern
+
+    if body.name is not None:
+        rule.name = body.name
+    if body.description is not None:
+        rule.description = body.description
+    if body.category is not None:
+        rule.category = body.category
+    if body.severity is not None:
+        rule.severity = body.severity
+    if body.action is not None:
+        rule.action = body.action
+    if body.rewrite_template is not None:
+        rule.rewrite_template = body.rewrite_template
+    if body.tags is not None:
+        rule.tags_json = json.dumps(body.tags)
+    if body.is_active is not None:
+        rule.is_active = body.is_active
+    if body.stage is not None:
+        rule.stage = body.stage
+
+    await db.commit()
+    await db.refresh(rule)
+
+    return SecurityRuleInfo(
+        id=str(rule.id),
+        name=rule.name,
+        description=rule.description,
+        category=rule.category,
+        severity=rule.severity,
+        pattern=rule.pattern,
+        action=rule.action,
+        rewrite_template=rule.rewrite_template,
+        tags=json.loads(rule.tags_json) if rule.tags_json else [],
+        is_active=rule.is_active,
+        stage=rule.stage,
+        created_at=rule.created_at,
+    )
+
+
+@router.delete("/security-rules/{rule_id}")
+async def delete_security_rule(rule_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Delete a security rule."""
+    result = await db.execute(select(SecurityRule).where(SecurityRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Security rule not found")
+
+    # Remove from threat engine
+    engine = get_threat_engine()
+    engine.library.remove_pattern(f"custom-{rule_id}")
+
+    await db.delete(rule)
+    await db.commit()
+    return {"status": "deleted", "rule_id": str(rule_id)}
+
+
+# ── Threat Detection Status & Test Endpoints ─────────────────────────
+
+
+@router.get("/threat-engine/status")
+async def threat_engine_status():
+    """Get threat detection engine status and statistics."""
+    engine = get_threat_engine()
+    return engine.get_stats()
+
+
+class ScanTestRequest(BaseModel):
+    text: str
+
+
+@router.post("/threat-engine/scan")
+async def scan_test(body: ScanTestRequest):
+    """Test the threat detection engine against sample text."""
+    engine = get_threat_engine()
+    threat_score = engine.scan(body.text)
+    action_result = engine.action_engine.evaluate(body.text, threat_score)
+    return {
+        "threat_score": threat_score.to_dict(),
+        "action": action_result.to_dict(),
     }

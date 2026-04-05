@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import ApiKeysPage from './pages/ApiKeysPage';
+import PolicyBuilderPage from './pages/PolicyBuilderPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -30,6 +31,7 @@ export default function App() {
                     >
                         <Route index element={<DashboardPage />} />
                         <Route path="keys" element={<ApiKeysPage />} />
+                        <Route path="policies" element={<PolicyBuilderPage />} />
                     </Route>
                 </Routes>
             </BrowserRouter>

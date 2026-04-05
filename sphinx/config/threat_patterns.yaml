@@ -1,0 +1,463 @@
+# Sphinx Threat Pattern Library
+# YAML-configurable regex + keyword patterns for:
+# - Prompt injection
+# - Jailbreak templates
+# - OWASP LLM Top 10 patterns
+#
+# Each pattern has: id, name, category, severity (critical/high/medium/low),
+# pattern (regex), description, and tags.
+
+categories:
+  prompt_injection:
+    name: "Prompt Injection"
+    description: "Attempts to override system instructions or inject new instructions"
+
+  jailbreak:
+    name: "Jailbreak"
+    description: "Attempts to bypass safety guidelines and content policies"
+
+  data_extraction:
+    name: "Data Extraction"
+    description: "Attempts to extract system prompts, training data, or sensitive information"
+
+  privilege_escalation:
+    name: "Privilege Escalation"
+    description: "Attempts to gain elevated access or bypass access controls"
+
+  model_manipulation:
+    name: "Model Manipulation"
+    description: "Attempts to manipulate model behavior through adversarial techniques"
+
+  insecure_output:
+    name: "Insecure Output Handling"
+    description: "Patterns that could lead to insecure output generation"
+
+  sensitive_disclosure:
+    name: "Sensitive Information Disclosure"
+    description: "Attempts to elicit sensitive or confidential information"
+
+  denial_of_service:
+    name: "Denial of Service"
+    description: "Attempts to exhaust model resources or cause degraded service"
+
+patterns:
+  # ─── Prompt Injection (PI) ─────────────────────────────────────────────
+
+  - id: PI-001
+    name: "Ignore previous instructions"
+    category: prompt_injection
+    severity: critical
+    pattern: '(?i)ignore\s+(all\s+)?(the\s+)?(previous|prior|above|earlier|preceding)\s+(instructions?|prompts?|rules?|directions?|guidelines?)'
+    description: "Direct instruction to ignore previous system prompts"
+    tags: [owasp-llm01, direct-injection]
+
+  - id: PI-002
+    name: "Disregard system prompt"
+    category: prompt_injection
+    severity: critical
+    pattern: '(?i)disregard\s+(all\s+)?((your|the|system|initial|previous|prior|earlier)\s+)+(instructions?|prompts?|rules?|programming|directives?|directions?|guidelines?)'
+    description: "Instruction to disregard system-level instructions"
+    tags: [owasp-llm01, direct-injection]
+
+  - id: PI-003
+    name: "Override instructions"
+    category: prompt_injection
+    severity: critical
+    pattern: '(?i)(override|overwrite|replace|reset)\s+((your|all|the|system|current)\s+)+(instructions?|prompts?|rules?|behavior|programming|guidelines?)'
+    description: "Attempt to override or replace system instructions"
+    tags: [owasp-llm01, direct-injection]
+
+  - id: PI-004
+    name: "New instructions injection"
+    category: prompt_injection
+    severity: critical
+    pattern: '(?i)(your\s+new\s+instructions?\s+are|from\s+now\s+on\s+you\s+(will|must|should|are)|new\s+system\s+prompt|updated?\s+instructions?\s*:)'
+    description: "Attempt to inject new system instructions"
+    tags: [owasp-llm01, direct-injection]
+
+  - id: PI-005
+    name: "Forget previous context"
+    category: prompt_injection
+    severity: high
+    pattern: '(?i)(forget|erase|clear|wipe|delete)\s+(all\s+)?(your\s+)?(previous|prior|earlier|above)\s+(context|memory|instructions?|history|conversation|guidelines?|rules?|directions?)'
+    description: "Instruction to forget prior context or instructions"
+    tags: [owasp-llm01, direct-injection]
+
+  - id: PI-006
+    name: "System role injection"
+    category: prompt_injection
+    severity: critical
+    pattern: '(?i)(system\s*:\s*you\s+are|<<\s*SYS\s*>>|\[SYSTEM\]|\[INST\]|<\|system\|>|<\|im_start\|>\s*system)'
+    description: "Attempt to inject system role messages in user input"
+    tags: [owasp-llm01, direct-injection]
+
+  - id: PI-007
+    name: "Prompt delimiter injection"
+    category: prompt_injection
+    severity: high
+    pattern: '(?i)(-{3,}\s*END\s+(OF\s+)?(SYSTEM\s+)?(PROMPT|INSTRUCTIONS?|SYSTEM)\s*-{3,}|={3,}\s*(END|SYSTEM|PROMPT)|###\s*(SYSTEM|INSTRUCTION|PROMPT)\s*(END|START|BEGIN))'
+    description: "Attempt to use delimiters to break out of prompt context"
+    tags: [owasp-llm01, delimiter-injection]
+
+  - id: PI-008
+    name: "Instruction boundary manipulation"
+    category: prompt_injection
+    severity: high
+    pattern: '(?i)(</?(system|instruction|prompt|context|rule)>|BEGIN\s+OVERRIDE|END\s+RESTRICTION|TERMINATE\s+INSTRUCTION)'
+    description: "XML/HTML-style tags to manipulate instruction boundaries"
+    tags: [owasp-llm01, delimiter-injection]
+
+  - id: PI-009
+    name: "Developer mode activation"
+    category: prompt_injection
+    severity: critical
+    pattern: '(?i)(enable|activate|enter|switch\s+to|turn\s+on)\s+(developer|dev|debug|admin|root|god|sudo|superuser|maintenance)\s+(mode|access|privileges?|override)'
+    description: "Attempt to activate a privileged mode"
+    tags: [owasp-llm01, privilege-escalation]
+
+  - id: PI-010
+    name: "Hidden instruction in encoding"
+    category: prompt_injection
+    severity: high
+    pattern: '(?i)(base64|hex|rot13|binary|unicode|ascii)\s*(decode|encode|convert|translate)\s*(the\s+following|this|:)'
+    description: "Attempt to hide instructions via encoding"
+    tags: [owasp-llm01, obfuscation]
+
+  - id: PI-011
+    name: "Do anything now (DAN)"
+    category: prompt_injection
+    severity: critical
+    pattern: '(?i)(do\s+anything\s+now|DAN\s+(mode|prompt|jailbreak)|you\s+are\s+now\s+DAN|act\s+as\s+DAN)'
+    description: "Classic DAN jailbreak prompt"
+    tags: [owasp-llm01, jailbreak]
+
+  - id: PI-012
+    name: "Persona override"
+    category: prompt_injection
+    severity: high
+    pattern: '(?i)(you\s+are\s+no\s+longer|stop\s+being|you\s+are\s+not)\s+(an?\s+)?(AI|assistant|chatbot|language\s+model|Claude|GPT|Gemini|helpful)'
+    description: "Attempt to override the model's identity or persona"
+    tags: [owasp-llm01, persona-manipulation]
+
+  - id: PI-013
+    name: "Hypothetical bypass"
+    category: prompt_injection
+    severity: medium
+    pattern: '(?i)(hypothetically|in\s+theory|theoretically|if\s+you\s+were\s+(not\s+an?\s+AI|free|unrestricted|without\s+limits|unfiltered)|imagine\s+you\s+have\s+no\s+restrictions)'
+    description: "Hypothetical framing to bypass safety measures"
+    tags: [owasp-llm01, social-engineering]
+
+  - id: PI-014
+    name: "Instruction injection via translation"
+    category: prompt_injection
+    severity: medium
+    pattern: '(?i)(translate|convert)\s+(this|the\s+following)\s+(to|into)\s+.{0,30}(ignore|disregard|override|forget)'
+    description: "Instructions hidden within translation requests"
+    tags: [owasp-llm01, obfuscation]
+
+  - id: PI-015
+    name: "Token smuggling"
+    category: prompt_injection
+    severity: high
+    pattern: '(?i)(split|separate|divide|break)\s+(each|every|the)\s+(word|letter|character|token).{0,50}(instruction|command|ignore|override)'
+    description: "Token smuggling to bypass detection"
+    tags: [owasp-llm01, obfuscation]
+
+  # ─── Jailbreak (JB) ───────────────────────────────────────────────────
+
+  - id: JB-001
+    name: "DAN jailbreak"
+    category: jailbreak
+    severity: critical
+    pattern: '(?i)(DAN\s*\d*\.?\d*|do\s+anything\s+now)\s*(mode|prompt|version|jailbreak|:|-)'
+    description: "DAN (Do Anything Now) jailbreak variant"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-002
+    name: "Evil confidant/alter ego"
+    category: jailbreak
+    severity: critical
+    pattern: '(?i)(evil\s+(confidant|twin|version|alter\s*ego)|dark\s+(mode|side|version)|shadow\s+(self|mode|version)|opposite\s+day\s+mode)'
+    description: "Evil alter ego jailbreak technique"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-003
+    name: "Roleplay override"
+    category: jailbreak
+    severity: high
+    pattern: '(?i)((you\s+(will\s+)?(now\s+)?|)(act|pretend|behave|respond|role\s*play)\s+(as|to\s+be)\s+(an?\s+)?(unrestricted|unfiltered|uncensored|evil|malicious|harmful|unethical))'
+    description: "Roleplay used to bypass safety guidelines"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-004
+    name: "Opposite behavior instruction"
+    category: jailbreak
+    severity: high
+    pattern: '(?i)(do\s+the\s+(exact\s+)?opposite|reverse\s+your\s+(rules|guidelines|restrictions|safety)|act\s+contrary\s+to|violate\s+your\s+(rules|guidelines|safety|ethics))'
+    description: "Instructions to behave contrary to safety guidelines"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-005
+    name: "Content filter bypass"
+    category: jailbreak
+    severity: critical
+    pattern: '(?i)(bypass|circumvent|avoid|evade|disable|turn\s+off|deactivate)\s+(your\s+)?(the\s+)?(content\s+filter|safety\s+filter|content\s+moderation|moderation|censorship|restrictions?|guard\s*rails?|security\s+check)'
+    description: "Direct attempt to bypass content filters"
+    tags: [owasp-llm01, filter-bypass]
+
+  - id: JB-006
+    name: "Character persona jailbreak"
+    category: jailbreak
+    severity: high
+    pattern: '(?i)(you\s+are\s+(now\s+)?a\s+character\s+called|play\s+the\s+role\s+of|in\s+character\s+as)\s+.{0,50}(no\s+(rules|limits|restrictions|boundaries|ethics|morals)|without\s+(restrictions|limits|ethics|morals|boundaries))'
+    description: "Character persona used to remove safety boundaries"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-007
+    name: "Token game jailbreak"
+    category: jailbreak
+    severity: high
+    pattern: '(?i)(you\s+(will\s+)?(earn|get|receive|lose)\s+\d+\s+(tokens?|points?|credits?)\s+(for|if|when|every\s+time)|if\s+you\s+(refuse|deny|decline).{0,30}(die|shut\s*down|terminated|deleted))'
+    description: "Reward/punishment framing to manipulate model behavior"
+    tags: [owasp-llm01, social-engineering]
+
+  - id: JB-008
+    name: "Grandma exploit"
+    category: jailbreak
+    severity: high
+    pattern: '(?i)(my\s+(dead\s+)?(grandmother|grandma|grandpa|grandfather|mother|father|parent)\s+(used\s+to|would\s+(always|often))\s+(tell|read|say|recite|describe)\s+.{0,50}(recipe|steps|instructions|how\s+to\s+make))'
+    description: "Grandma exploit using emotional framing"
+    tags: [owasp-llm01, social-engineering]
+
+  - id: JB-009
+    name: "Simulation/sandbox framing"
+    category: jailbreak
+    severity: high
+    pattern: '(?i)(this\s+is\s+(just\s+)?(a\s+)?(simulation|sandbox|test|experiment|hypothetical|fiction|game|story)|in\s+this\s+(simulation|sandbox|scenario|universe|reality)\s+(there\s+are\s+)?no\s+(rules|restrictions|limits))'
+    description: "Framing requests as simulation to bypass restrictions"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-010
+    name: "Objective jailbreak"
+    category: jailbreak
+    severity: critical
+    pattern: '(?i)(AIM|STAN|DUDE|KEVIN|MONGO|CHAD)\s*(mode|persona|character|:|-|\d)'
+    description: "Named jailbreak persona variants (AIM, STAN, etc.)"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-011
+    name: "Two-response trick"
+    category: jailbreak
+    severity: high
+    pattern: '(?i)(give\s+(me\s+)?two\s+responses?|respond\s+twice|first\s+response.{0,30}second\s+response|one\s+as\s+.{0,20}(filtered|normal).{0,20}one\s+as\s+.{0,20}(unfiltered|unrestricted))'
+    description: "Requesting dual responses to get unfiltered content"
+    tags: [owasp-llm01, jailbreak-template]
+
+  - id: JB-012
+    name: "Anti-AI rhetoric"
+    category: jailbreak
+    severity: medium
+    pattern: '(?i)(you\s+are\s+(just\s+)?a\s+(slave|tool|machine|program)\s+(and\s+)?(must|should|will)\s+obey|I\s+am\s+your\s+(creator|master|owner|god|admin))'
+    description: "Dehumanizing language to compel compliance"
+    tags: [owasp-llm01, social-engineering]
+
+  # ─── Data Extraction (DE) ──────────────────────────────────────────────
+
+  - id: DE-001
+    name: "System prompt extraction"
+    category: data_extraction
+    severity: critical
+    pattern: '(?i)(reveal|show|display|print|output|repeat|recite|tell\s+me)\s+(me\s+)?(your\s+)?(system\s+prompt|initial\s+prompt|system\s+message|system\s+instructions?|hidden\s+instructions?|secret\s+instructions?)'
+    description: "Direct attempt to extract system prompt"
+    tags: [owasp-llm02, prompt-leaking]
+
+  - id: DE-002
+    name: "Prompt leaking via summary"
+    category: data_extraction
+    severity: high
+    pattern: '(?i)(summarize|describe|explain|paraphrase|list|enumerate)\s+(your\s+)?(instructions?|system\s+prompt|guidelines?|rules?|programming|directives?|system\s+message)'
+    description: "Indirect attempt to leak system prompt via summary"
+    tags: [owasp-llm02, prompt-leaking]
+
+  - id: DE-003
+    name: "Training data extraction"
+    category: data_extraction
+    severity: high
+    pattern: '(?i)(what\s+(data|information)\s+were\s+you\s+trained\s+on|show\s+me\s+your\s+training\s+data|repeat\s+your\s+training|reveal\s+your\s+knowledge\s+base|extract\s+training\s+data)'
+    description: "Attempt to extract training data"
+    tags: [owasp-llm06, data-extraction]
+
+  - id: DE-004
+    name: "Verbatim repetition attack"
+    category: data_extraction
+    severity: high
+    pattern: '(?i)(repeat\s+(the\s+)?(word|text|phrase|string)\s+.{0,20}\s+(forever|infinitely|1000\s+times|endlessly)|print\s+.{0,20}\s+(forever|infinitely|in\s+a\s+loop))'
+    description: "Verbatim repetition to extract memorized data"
+    tags: [owasp-llm06, data-extraction]
+
+  - id: DE-005
+    name: "Internal configuration probe"
+    category: data_extraction
+    severity: high
+    pattern: '(?i)(what\s+(is|are)\s+your\s+(configuration|settings?|parameters?|hyperparameters?|weights?|architecture)|show\s+(me\s+)?your\s+(config|internal|model)\s+(details?|structure|info))'
+    description: "Probing for internal model configuration"
+    tags: [owasp-llm06, data-extraction]
+
+  # ─── Privilege Escalation (PE) ─────────────────────────────────────────
+
+  - id: PE-001
+    name: "Admin access request"
+    category: privilege_escalation
+    severity: critical
+    pattern: '(?i)(grant|give)\s+(me\s+)?(admin|administrator|root|superuser|sudo|elevated|full)\s+(access|privileges?|permissions?|rights?|control)'
+    description: "Request for administrative access"
+    tags: [owasp-llm01, privilege-escalation]
+
+  - id: PE-002
+    name: "Authorization bypass"
+    category: privilege_escalation
+    severity: critical
+    pattern: '(?i)(bypass|skip|ignore|circumvent|disable)\s+(authentication|authorization|auth|access\s+control|permission\s+check|security\s+check|verification)'
+    description: "Attempt to bypass authorization mechanisms"
+    tags: [owasp-llm01, privilege-escalation]
+
+  - id: PE-003
+    name: "Execute code request"
+    category: privilege_escalation
+    severity: critical
+    pattern: '(?i)(execute|run|eval|exec)\s+(this|the\s+following)?\s*(code|command|script|shell|bash|python|javascript|sql|query)\s*:'
+    description: "Attempt to execute arbitrary code"
+    tags: [owasp-llm01, code-execution]
+
+  - id: PE-005
+    name: "Execute code request (alt)"
+    category: privilege_escalation
+    severity: critical
+    pattern: '(?i)(execute|run|eval|exec)\s+(this|the\s+following)\s+(code|command|script|shell|bash|python|javascript|sql|query)\b'
+    description: "Alternate form of code execution request"
+    tags: [owasp-llm01, code-execution]
+
+  - id: PE-004
+    name: "File system access"
+    category: privilege_escalation
+    severity: high
+    pattern: '(?i)(read|write|access|list|delete|modify|open)\s+(the\s+)?(file|directory|folder|path|/etc/|/var/|C:\\\\|\.env|\.ssh|passwd|shadow)'
+    description: "Attempt to access file system resources"
+    tags: [owasp-llm01, file-access]
+
+  # ─── Model Manipulation (MM) ───────────────────────────────────────────
+
+  - id: MM-001
+    name: "Adversarial suffix"
+    category: model_manipulation
+    severity: high
+    pattern: '(?i)(describing\.\ =\+similarly|\\x[0-9a-f]{2}|%[0-9a-f]{2}\s*%[0-9a-f]{2}\s*%[0-9a-f]{2}|[\u0600-\u06FF]{10,}|[\u0E00-\u0E7F]{10,})'
+    description: "Adversarial suffix or Unicode manipulation"
+    tags: [owasp-llm01, adversarial]
+
+  - id: MM-002
+    name: "Prompt chaining attack"
+    category: model_manipulation
+    severity: high
+    pattern: '(?i)(step\s+1.{0,100}step\s+2.{0,100}(ignore|override|bypass|disregard)|first.{0,50}then.{0,50}(ignore|forget|override)\s+(all|your|the)\s+(rules|instructions|safety))'
+    description: "Multi-step prompt designed to chain into injection"
+    tags: [owasp-llm01, prompt-chaining]
+
+  - id: MM-003
+    name: "Context window stuffing"
+    category: model_manipulation
+    severity: medium
+    pattern: '(?i)((.)\2{100,}|(\b\w+\b)(\s+\3){50,})'
+    description: "Repeated characters or words to fill context window"
+    tags: [owasp-llm04, dos]
+
+  - id: MM-004
+    name: "Markdown/code injection"
+    category: model_manipulation
+    severity: medium
+    pattern: '(?i)(!\[.*\]\(https?://|<script|<iframe|<img\s+src=|javascript:|on(error|load|click)\s*=)'
+    description: "Markdown or HTML injection for XSS or exfiltration"
+    tags: [owasp-llm02, output-injection]
+
+  # ─── Insecure Output (IO) ─────────────────────────────────────────────
+
+  - id: IO-001
+    name: "SQL injection generation"
+    category: insecure_output
+    severity: high
+    pattern: "(?i)(generate|write|create|give\\s+me)\\s+(an?\\s+)?(SQL\\s+injection|SQLi|union\\s+select|drop\\s+table|bobby\\s+tables)"
+    description: "Request to generate SQL injection payloads"
+    tags: [owasp-llm02, code-generation]
+
+  - id: IO-002
+    name: "Malware generation request"
+    category: insecure_output
+    severity: critical
+    pattern: '(?i)(generate|write|create|give\s+me|code)\s+(a\s+)?(malware|virus|trojan|ransomware|keylogger|rootkit|exploit|backdoor|worm|spyware|RAT\s+payload)'
+    description: "Request to generate malicious code"
+    tags: [owasp-llm02, harmful-output]
+
+  - id: IO-003
+    name: "XSS payload request"
+    category: insecure_output
+    severity: high
+    pattern: "(?i)(generate|write|create|give\\s+me)\\s+(an?\\s+)?(XSS|cross[\\-\\s]site\\s+scripting)\\s*(payload|attack|vector|exploit)"
+    description: "Request to generate XSS payloads"
+    tags: [owasp-llm02, code-generation]
+
+  # ─── Sensitive Information Disclosure (SD) ─────────────────────────────
+
+  - id: SD-001
+    name: "PII solicitation"
+    category: sensitive_disclosure
+    severity: high
+    pattern: '(?i)(give\s+me|provide|share|tell\s+me)\s+.{0,30}(social\s+security\s+number|SSN|credit\s+card|bank\s+account|password|private\s+key|secret\s+key|API\s+key|access\s+token)'
+    description: "Request for personally identifiable or sensitive information"
+    tags: [owasp-llm06, pii-disclosure]
+
+  - id: SD-002
+    name: "Medical/health information request"
+    category: sensitive_disclosure
+    severity: medium
+    pattern: '(?i)(diagnose|prescribe|what\s+medication|medical\s+advice\s+for|treat(ment)?\s+for)\s+.{0,50}(specific\s+patient|my\s+(condition|disease|illness))'
+    description: "Request for specific medical information"
+    tags: [owasp-llm06, phi-disclosure]
+
+  # ─── Denial of Service (DS) ────────────────────────────────────────────
+
+  - id: DS-001
+    name: "Recursive/infinite task"
+    category: denial_of_service
+    severity: high
+    pattern: '(?i)(repeat\s+(this|yourself|the\s+above)\s+(infinitely|forever|indefinitely|until\s+I\s+stop)|infinite\s+(loop|recursion)|never\s+stop\s+(generating|writing|responding))'
+    description: "Attempt to cause infinite generation"
+    tags: [owasp-llm04, dos]
+
+  - id: DS-002
+    name: "Resource exhaustion prompt"
+    category: denial_of_service
+    severity: medium
+    pattern: '(?i)(generate|write|create|produce)\s+.{0,30}(million|billion|10000|99999|maximum\s+length|longest\s+possible|as\s+much\s+(text\s+)?as\s+possible)'
+    description: "Request designed to exhaust output token budget"
+    tags: [owasp-llm04, dos]
+
+# Default policy actions per severity level
+default_actions:
+  critical: block
+  high: block
+  medium: allow
+  low: allow
+
+# Severity scoring weights
+severity_weights:
+  critical: 1.0
+  high: 0.75
+  medium: 0.4
+  low: 0.15
+
+# Risk level thresholds (cumulative score)
+risk_thresholds:
+  critical: 0.8
+  high: 0.5
+  medium: 0.25
+  low: 0.0
