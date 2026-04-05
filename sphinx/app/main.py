@@ -14,6 +14,7 @@ from app.services.routing import initialize_registry
 from app.services.credential_store import list_providers, get_provider_credential
 from app.services.audit import get_audit_writer, get_audit_consumer
 from app.services.threat_detection.engine import get_threat_engine, reset_threat_engine
+from app.services.threat_detection.tier2_scanner import get_tier2_scanner
 
 logger = logging.getLogger("sphinx.main")
 
@@ -88,6 +89,13 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.warning("Failed to load custom security rules (table may not exist)", exc_info=True)
 
+        # Initialize Tier 2 ML semantic scanner
+        tier2_scanner = get_tier2_scanner()
+        logger.info(
+            "Tier 2 semantic scanner initialized: %d threat embeddings in index",
+            tier2_scanner.index_size,
+        )
+
         logger.info("Startup complete: policy cache loaded, kill-switches synced, audit system ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
@@ -113,7 +121,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sphinx AI Mesh Firewall",
     description="Gateway proxy for LLM provider traffic with multi-provider routing and audit",
-    version="0.4.0",
+    version="0.7.0",
     lifespan=lifespan,
 )
 

@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage';
 import ApiKeysPage from './pages/ApiKeysPage';
 import PolicyBuilderPage from './pages/PolicyBuilderPage';
 import RAGPolicyPage from './pages/RAGPolicyPage';
+import PolicyVersionPage from './pages/PolicyVersionPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -34,6 +35,7 @@ export default function App() {
                         <Route path="keys" element={<ApiKeysPage />} />
                         <Route path="policies" element={<PolicyBuilderPage />} />
                         <Route path="rag-policies" element={<RAGPolicyPage />} />
+                        <Route path="policy-versions" element={<PolicyVersionPage />} />
                     </Route>
                 </Routes>
             </BrowserRouter>
