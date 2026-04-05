@@ -34,6 +34,62 @@ class APIKey(Base):
     )
 
 
+class KillSwitch(Base):
+    __tablename__ = "kill_switches"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    model_name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    action: Mapped[str] = mapped_column(String(16), default="block")  # block | reroute
+    fallback_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    activated_by: Mapped[str] = mapped_column(String(128))
+    reason: Mapped[str] = mapped_column(String(512), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TokenUsage(Base):
+    __tablename__ = "token_usage"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    api_key_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    model: Mapped[str] = mapped_column(String(128), default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PolicyRule(Base):
+    __tablename__ = "policy_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    policy_type: Mapped[str] = mapped_column(String(64))  # rate_limit, access_control, kill_switch, etc.
+    rules_json: Mapped[str] = mapped_column(String(4096), default="{}")  # compiled policy as JSON
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ProviderCredential(Base):
     __tablename__ = "provider_credentials"
 

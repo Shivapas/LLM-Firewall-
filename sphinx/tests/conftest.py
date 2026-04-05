@@ -21,6 +21,15 @@ def mock_redis():
     r.setex = AsyncMock()
     r.delete = AsyncMock()
     r.ping = AsyncMock()
+    r.hgetall = AsyncMock(return_value={})
+    r.pipeline.return_value = AsyncMock()
+    r.pipeline.return_value.execute = AsyncMock(return_value=[])
+    r.pipeline.return_value.hincrby = AsyncMock()
+    r.pipeline.return_value.expire = AsyncMock()
+    r.pipeline.return_value.zremrangebyscore = AsyncMock()
+    r.eval = AsyncMock(return_value=[1, 0, 0])  # Default: rate limit allows
+    r.zrange = AsyncMock(return_value=[])
+    r.zremrangebyscore = AsyncMock()
     return r
 
 
