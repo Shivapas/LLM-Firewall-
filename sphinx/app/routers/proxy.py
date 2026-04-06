@@ -12,13 +12,16 @@ from starlette.responses import JSONResponse, Response
 from app.services.proxy import proxy_request
 from app.services.rate_limiter import check_rate_limit
 from app.services.kill_switch import check_kill_switch
-from app.services.token_budget import record_token_usage, persist_usage_to_db
+from app.services.token_budget import record_token_usage, get_budget_state, persist_usage_to_db
 from app.services.routing import resolve_provider, route_request
 from app.services.audit import emit_audit_event
 from app.services.threat_detection.engine import get_threat_engine
 from app.services.data_shield.engine import get_data_shield_engine
 from app.services.rag.pipeline import get_rag_pipeline
 from app.services.rag.classifier import RequestType
+from app.services.routing_policy import get_routing_policy_evaluator, RoutingContext, RoutingAction
+from app.services.budget_downgrade import get_budget_downgrade_service
+from app.services.routing_audit import emit_routing_audit_event
 from app.services.database import async_session
 from app.config import get_settings
 
@@ -257,6 +260,87 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 headers={"Retry-After": str(rate_result.get("retry_after", 60))},
             )
 
+    # ── Routing policy evaluation (sensitivity + budget) ──
+    routing_decision = None
+    downgrade_info = None
+    if model_name and api_key_id:
+        # Collect compliance tags from data shield scan
+        compliance_tags = []
+        requires_private = False
+        if shield_result:
+            if shield_result.pii_count > 0:
+                compliance_tags.append("PII")
+            if shield_result.phi_count > 0:
+                compliance_tags.append("PHI")
+            if shield_result.credential_count > 0:
+                compliance_tags.append("IP")
+
+        # Check budget state for downgrade evaluation
+        budget_state = await get_budget_state(api_key_id)
+        current_usage = budget_state.get("total_tokens", 0)
+        budget_svc = get_budget_downgrade_service()
+        budget_exceeded = budget_svc.is_budget_exceeded(model_name, current_usage, tenant_id)
+        budget_usage_pct = budget_svc.get_budget_usage_pct(model_name, current_usage, tenant_id)
+
+        # Build routing context
+        routing_ctx = RoutingContext(
+            model_name=model_name,
+            tenant_id=tenant_id,
+            api_key_id=api_key_id,
+            compliance_tags=compliance_tags,
+            sensitivity_score=getattr(request.state, "risk_score", 0.0),
+            requires_private_model=requires_private,
+            kill_switch_active=False,
+            budget_exceeded=budget_exceeded,
+            budget_usage_pct=budget_usage_pct,
+        )
+
+        # Evaluate routing policy
+        evaluator = get_routing_policy_evaluator()
+        routing_decision = evaluator.evaluate(routing_ctx)
+
+        if routing_decision.action == RoutingAction.ROUTE and routing_decision.target_model != model_name:
+            logger.info(
+                "Routing policy rerouted: model=%s -> %s reason=%s tenant=%s",
+                model_name, routing_decision.target_model, routing_decision.reason, tenant_id,
+            )
+            payload = json.loads(body)
+            payload["model"] = routing_decision.target_model
+            body = json.dumps(payload).encode()
+            model_name = routing_decision.target_model
+            audit_action = "routed_sensitivity"
+
+        elif routing_decision.action == RoutingAction.BLOCK:
+            latency_ms = (time.time() - start_time) * 1000
+            await emit_routing_audit_event(
+                request_body=body, decision=routing_decision,
+                tenant_id=tenant_id, project_id=project_id,
+                api_key_id=str(api_key_id),
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "Request blocked by routing policy",
+                    "reason": routing_decision.reason,
+                },
+            )
+
+        # Budget-triggered downgrade (if no sensitivity reroute already happened)
+        if routing_decision.action == RoutingAction.DEFAULT and budget_exceeded:
+            budget_decision = await budget_svc.evaluate(model_name, api_key_id, tenant_id)
+            if budget_decision.should_downgrade:
+                downgrade_info = budget_decision.to_dict()
+                payload = json.loads(body)
+                payload["model"] = budget_decision.downgrade_model
+                body = json.dumps(payload).encode()
+                model_name = budget_decision.downgrade_model
+                audit_action = "downgraded_budget"
+                logger.info(
+                    "Budget downgrade: %s -> %s usage=%d/%d tenant=%s",
+                    budget_decision.original_model, budget_decision.downgrade_model,
+                    budget_decision.current_usage, budget_decision.budget_limit, tenant_id,
+                )
+
     # ── Multi-provider routing ──
     provider = resolve_provider(model_name) if model_name else None
 
@@ -276,6 +360,18 @@ async def gateway_proxy(request: Request, path: str) -> Response:
         )
         response = await proxy_request(request, target_url)
 
+    # ── Routing decision audit log ──
+    if routing_decision and routing_decision.action != RoutingAction.DEFAULT:
+        try:
+            await emit_routing_audit_event(
+                request_body=body, decision=routing_decision,
+                tenant_id=tenant_id, project_id=project_id,
+                api_key_id=str(api_key_id) if api_key_id else "",
+                downgrade_info=downgrade_info,
+            )
+        except Exception:
+            logger.debug("Failed to emit routing audit event", exc_info=True)
+
     # ── Audit event emission ──
     latency_ms = (time.time() - start_time) * 1000
     audit_metadata = {}
@@ -283,6 +379,10 @@ async def gateway_proxy(request: Request, path: str) -> Response:
         audit_metadata["rag"] = rag_result.to_dict()
     if shield_result and shield_result.redaction and shield_result.redaction.redaction_count > 0:
         audit_metadata["data_shield"] = shield_result.to_dict()
+    if routing_decision:
+        audit_metadata["routing_decision"] = routing_decision.to_dict()
+    if downgrade_info:
+        audit_metadata["budget_downgrade"] = downgrade_info
     try:
         await emit_audit_event(
             request_body=body,

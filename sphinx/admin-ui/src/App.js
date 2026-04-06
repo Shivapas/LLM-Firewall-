@@ -9,6 +9,7 @@ import RAGPolicyPage from './pages/RAGPolicyPage';
 import PolicyVersionPage from './pages/PolicyVersionPage';
 import VectorDBPage from './pages/VectorDBPage';
 import VectorDBDashboardPage from './pages/VectorDBDashboardPage';
+import RoutingRulesPage from './pages/RoutingRulesPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -40,6 +41,7 @@ export default function App() {
                         <Route path="policy-versions" element={<PolicyVersionPage />} />
                         <Route path="vector-db" element={<VectorDBPage />} />
                         <Route path="vector-dashboard" element={<VectorDBDashboardPage />} />
+                        <Route path="routing-rules" element={<RoutingRulesPage />} />
                     </Route>
                 </Routes>
             </BrowserRouter>

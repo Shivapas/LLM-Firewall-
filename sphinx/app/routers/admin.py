@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident, CollectionAuditLogRecord
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident, CollectionAuditLogRecord, RoutingRule, BudgetTier
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -1617,3 +1617,294 @@ async def compliance_tagger_status():
         "phi_patterns": len(tagger._policy.phi_content_patterns),
         "ip_patterns": len(tagger._policy.ip_content_patterns),
     }
+
+
+# ── Sprint 11: Routing Rules & Budget Tiers ────────────────────────────
+
+
+class CreateRoutingRuleRequest(BaseModel):
+    name: str
+    description: str = ""
+    priority: int = 100
+    condition_type: str = "sensitivity"
+    condition_json: str = "{}"
+    target_model: str = ""
+    target_provider: str = ""
+    action: str = "route"
+    tenant_id: str = "*"
+    is_active: bool = True
+
+
+class UpdateRoutingRuleRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[int] = None
+    condition_type: Optional[str] = None
+    condition_json: Optional[str] = None
+    target_model: Optional[str] = None
+    target_provider: Optional[str] = None
+    action: Optional[str] = None
+    tenant_id: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/routing-rules")
+async def list_routing_rules(db: AsyncSession = Depends(get_db)):
+    """List all routing rules ordered by priority."""
+    result = await db.execute(
+        select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.created_at)
+    )
+    rules = result.scalars().all()
+    return {
+        "rules": [
+            {
+                "id": str(r.id),
+                "name": r.name,
+                "description": r.description,
+                "priority": r.priority,
+                "condition_type": r.condition_type,
+                "condition_json": r.condition_json,
+                "target_model": r.target_model,
+                "target_provider": r.target_provider,
+                "action": r.action,
+                "tenant_id": r.tenant_id,
+                "is_active": r.is_active,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            for r in rules
+        ],
+        "total": len(rules),
+    }
+
+
+@router.post("/routing-rules", status_code=201)
+async def create_routing_rule(
+    req: CreateRoutingRuleRequest, db: AsyncSession = Depends(get_db)
+):
+    """Create a new routing rule."""
+    # Validate condition JSON
+    try:
+        json.loads(req.condition_json)
+    except (json.JSONDecodeError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid condition_json")
+
+    rule = RoutingRule(
+        name=req.name,
+        description=req.description,
+        priority=req.priority,
+        condition_type=req.condition_type,
+        condition_json=req.condition_json,
+        target_model=req.target_model,
+        target_provider=req.target_provider,
+        action=req.action,
+        tenant_id=req.tenant_id,
+        is_active=req.is_active,
+    )
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+
+    # Reload rules into the evaluator
+    await _reload_routing_rules(db)
+
+    return {
+        "id": str(rule.id),
+        "name": rule.name,
+        "priority": rule.priority,
+        "action": rule.action,
+        "target_model": rule.target_model,
+        "created": True,
+    }
+
+
+@router.put("/routing-rules/{rule_id}")
+async def update_routing_rule(
+    rule_id: str, req: UpdateRoutingRuleRequest, db: AsyncSession = Depends(get_db)
+):
+    """Update an existing routing rule."""
+    result = await db.execute(
+        select(RoutingRule).where(RoutingRule.id == uuid.UUID(rule_id))
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Routing rule not found")
+
+    for field_name, value in req.model_dump(exclude_unset=True).items():
+        if field_name == "condition_json" and value is not None:
+            try:
+                json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                raise HTTPException(status_code=400, detail="Invalid condition_json")
+        setattr(rule, field_name, value)
+
+    await db.commit()
+    await db.refresh(rule)
+    await _reload_routing_rules(db)
+
+    return {"id": str(rule.id), "name": rule.name, "updated": True}
+
+
+@router.delete("/routing-rules/{rule_id}")
+async def delete_routing_rule(rule_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a routing rule."""
+    result = await db.execute(
+        select(RoutingRule).where(RoutingRule.id == uuid.UUID(rule_id))
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Routing rule not found")
+
+    await db.delete(rule)
+    await db.commit()
+    await _reload_routing_rules(db)
+
+    return {"id": rule_id, "deleted": True}
+
+
+class CreateBudgetTierRequest(BaseModel):
+    model_name: str
+    tier_name: str = "standard"
+    token_budget: int = 1000000
+    downgrade_model: str = ""
+    budget_window_seconds: int = 3600
+    tenant_id: str = "*"
+    is_active: bool = True
+
+
+@router.get("/budget-tiers")
+async def list_budget_tiers(db: AsyncSession = Depends(get_db)):
+    """List all budget tier configurations."""
+    result = await db.execute(
+        select(BudgetTier).order_by(BudgetTier.model_name, BudgetTier.tier_name)
+    )
+    tiers = result.scalars().all()
+    return {
+        "tiers": [
+            {
+                "id": str(t.id),
+                "model_name": t.model_name,
+                "tier_name": t.tier_name,
+                "token_budget": t.token_budget,
+                "downgrade_model": t.downgrade_model,
+                "budget_window_seconds": t.budget_window_seconds,
+                "tenant_id": t.tenant_id,
+                "is_active": t.is_active,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            for t in tiers
+        ],
+        "total": len(tiers),
+    }
+
+
+@router.post("/budget-tiers", status_code=201)
+async def create_budget_tier(
+    req: CreateBudgetTierRequest, db: AsyncSession = Depends(get_db)
+):
+    """Create a new budget tier configuration."""
+    tier = BudgetTier(
+        model_name=req.model_name,
+        tier_name=req.tier_name,
+        token_budget=req.token_budget,
+        downgrade_model=req.downgrade_model,
+        budget_window_seconds=req.budget_window_seconds,
+        tenant_id=req.tenant_id,
+        is_active=req.is_active,
+    )
+    db.add(tier)
+    await db.commit()
+    await db.refresh(tier)
+    await _reload_budget_tiers(db)
+
+    return {
+        "id": str(tier.id),
+        "model_name": tier.model_name,
+        "tier_name": tier.tier_name,
+        "downgrade_model": tier.downgrade_model,
+        "created": True,
+    }
+
+
+@router.delete("/budget-tiers/{tier_id}")
+async def delete_budget_tier(tier_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a budget tier configuration."""
+    result = await db.execute(
+        select(BudgetTier).where(BudgetTier.id == uuid.UUID(tier_id))
+    )
+    tier = result.scalar_one_or_none()
+    if not tier:
+        raise HTTPException(status_code=404, detail="Budget tier not found")
+
+    await db.delete(tier)
+    await db.commit()
+    await _reload_budget_tiers(db)
+
+    return {"id": tier_id, "deleted": True}
+
+
+@router.get("/routing-policy/status")
+async def routing_policy_status():
+    """Get current routing policy evaluator status."""
+    from app.services.routing_policy import get_routing_policy_evaluator
+    from app.services.budget_downgrade import get_budget_downgrade_service
+
+    evaluator = get_routing_policy_evaluator()
+    budget_svc = get_budget_downgrade_service()
+
+    return {
+        "routing_rules_loaded": len(evaluator._rules),
+        "budget_tiers_loaded": sum(len(v) for v in budget_svc._tiers.values()),
+        "private_model": evaluator._private_model,
+        "private_provider": evaluator._private_provider,
+        "public_model": evaluator._public_model,
+        "public_provider": evaluator._public_provider,
+    }
+
+
+async def _reload_routing_rules(db: AsyncSession) -> None:
+    """Reload routing rules from DB into the evaluator."""
+    from app.services.routing_policy import get_routing_policy_evaluator
+
+    result = await db.execute(
+        select(RoutingRule).where(RoutingRule.is_active == True).order_by(RoutingRule.priority)
+    )
+    rules = result.scalars().all()
+    evaluator = get_routing_policy_evaluator()
+    evaluator.load_rules([
+        {
+            "id": str(r.id),
+            "name": r.name,
+            "priority": r.priority,
+            "condition_type": r.condition_type,
+            "condition_json": r.condition_json,
+            "target_model": r.target_model,
+            "target_provider": r.target_provider,
+            "action": r.action,
+            "tenant_id": r.tenant_id,
+            "is_active": r.is_active,
+        }
+        for r in rules
+    ])
+
+
+async def _reload_budget_tiers(db: AsyncSession) -> None:
+    """Reload budget tiers from DB into the downgrade service."""
+    from app.services.budget_downgrade import get_budget_downgrade_service
+
+    result = await db.execute(
+        select(BudgetTier).where(BudgetTier.is_active == True)
+    )
+    tiers = result.scalars().all()
+    svc = get_budget_downgrade_service()
+    svc.load_tiers([
+        {
+            "model_name": t.model_name,
+            "tier_name": t.tier_name,
+            "token_budget": t.token_budget,
+            "downgrade_model": t.downgrade_model,
+            "budget_window_seconds": t.budget_window_seconds,
+            "tenant_id": t.tenant_id,
+        }
+        for t in tiers
+    ])
