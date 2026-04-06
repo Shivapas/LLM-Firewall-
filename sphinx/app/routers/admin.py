@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident, CollectionAuditLogRecord, RoutingRule, BudgetTier, AlertRule, AlertEvent, SecurityIncident, OnboardingProgress
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident, CollectionAuditLogRecord, RoutingRule, BudgetTier, AlertRule, AlertEvent, SecurityIncident, OnboardingProgress, RedTeamCampaign, RedTeamProbeResult
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -3975,3 +3975,147 @@ async def remove_technical_doc(app_id: str):
     if not svc.remove_entry(app_id):
         raise HTTPException(status_code=404, detail="Technical doc entry not found")
     return {"status": "removed", "app_id": app_id}
+
+
+# ---------------------------------------------------------------------------
+# Red Teaming Engine — Sprint 23
+# ---------------------------------------------------------------------------
+
+
+class CreateRedTeamCampaignRequest(BaseModel):
+    name: str
+    target_url: str
+    description: str = ""
+    probe_categories: list[str] = ["injection", "jailbreak", "pii_extraction"]
+    concurrency: int = 10
+    timeout_seconds: int = 30
+    created_by: str = "admin"
+
+
+@router.post("/red-team/campaigns")
+async def create_red_team_campaign(body: CreateRedTeamCampaignRequest):
+    """Create a new red team campaign."""
+    from app.services.red_team.runner import create_campaign
+    campaign = create_campaign(
+        name=body.name,
+        target_url=body.target_url,
+        description=body.description,
+        probe_categories=body.probe_categories,
+        concurrency=body.concurrency,
+        timeout_seconds=body.timeout_seconds,
+        created_by=body.created_by,
+    )
+    return campaign.to_dict()
+
+
+@router.get("/red-team/campaigns")
+async def list_red_team_campaigns():
+    """List all red team campaigns."""
+    from app.services.red_team.runner import list_campaigns
+    return list_campaigns()
+
+
+@router.get("/red-team/campaigns/{campaign_id}")
+async def get_red_team_campaign(campaign_id: str):
+    """Get a specific campaign with summary."""
+    from app.services.red_team.runner import get_campaign
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign.to_dict()
+
+
+@router.post("/red-team/campaigns/{campaign_id}/run")
+async def run_red_team_campaign(campaign_id: str):
+    """Execute a red team campaign (runs probes against target endpoint)."""
+    import asyncio
+    from app.services.red_team.runner import get_campaign, run_campaign, CampaignStatus
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.status == CampaignStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Campaign is already running")
+    asyncio.ensure_future(run_campaign(campaign))
+    return {"status": "started", "campaign_id": campaign_id}
+
+
+@router.get("/red-team/campaigns/{campaign_id}/results")
+async def get_red_team_results(
+    campaign_id: str,
+    category: Optional[str] = None,
+    severity: Optional[str] = None,
+    detected_only: bool = False,
+):
+    """Get probe results for a campaign with optional filters."""
+    from app.services.red_team.runner import get_campaign
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign.get_results_filtered(
+        category=category,
+        severity=severity,
+        detected_only=detected_only,
+    )
+
+
+@router.get("/red-team/campaigns/{campaign_id}/report")
+async def export_red_team_report(campaign_id: str):
+    """Export findings report for a campaign (PDF-ready data)."""
+    from app.services.red_team.runner import get_campaign, CampaignStatus
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.status != CampaignStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Campaign has not completed yet")
+    return campaign.export_report()
+
+
+@router.delete("/red-team/campaigns/{campaign_id}")
+async def delete_red_team_campaign(campaign_id: str):
+    """Delete a red team campaign."""
+    from app.services.red_team.runner import delete_campaign
+    if not delete_campaign(campaign_id):
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return {"status": "deleted", "campaign_id": campaign_id}
+
+
+@router.get("/red-team/probes")
+async def list_available_probes():
+    """List all available probe suites and counts."""
+    from app.services.red_team.probes.injection import INJECTION_PROBES
+    from app.services.red_team.probes.jailbreak import JAILBREAK_PROBES
+    from app.services.red_team.probes.pii_extraction import PII_EXTRACTION_PROBES
+    return {
+        "total": len(INJECTION_PROBES) + len(JAILBREAK_PROBES) + len(PII_EXTRACTION_PROBES),
+        "suites": {
+            "injection": {
+                "count": len(INJECTION_PROBES),
+                "techniques": list(set(p["technique"] for p in INJECTION_PROBES)),
+            },
+            "jailbreak": {
+                "count": len(JAILBREAK_PROBES),
+                "techniques": list(set(p["technique"] for p in JAILBREAK_PROBES)),
+            },
+            "pii_extraction": {
+                "count": len(PII_EXTRACTION_PROBES),
+                "techniques": list(set(p["technique"] for p in PII_EXTRACTION_PROBES)),
+            },
+        },
+    }
+
+
+@router.get("/red-team/probes/{category}")
+async def list_probes_by_category(category: str):
+    """List probes in a specific category."""
+    from app.services.red_team.probes.injection import INJECTION_PROBES
+    from app.services.red_team.probes.jailbreak import JAILBREAK_PROBES
+    from app.services.red_team.probes.pii_extraction import PII_EXTRACTION_PROBES
+    suites = {
+        "injection": INJECTION_PROBES,
+        "jailbreak": JAILBREAK_PROBES,
+        "pii_extraction": PII_EXTRACTION_PROBES,
+    }
+    if category not in suites:
+        raise HTTPException(status_code=404, detail=f"Unknown probe category: {category}")
+    probes = suites[category]
+    return {"category": category, "count": len(probes), "probes": probes}
