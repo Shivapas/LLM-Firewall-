@@ -19,6 +19,7 @@ from app.services.health_probe import get_health_probe
 from app.services.circuit_breaker import sync_circuit_breakers_from_db
 from app.services.failover_policy import get_failover_engine
 from app.services.mcp.discovery import get_mcp_discovery_service
+from app.services.mcp.agent_scope import get_agent_scope_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -117,7 +118,11 @@ async def lifespan(app: FastAPI):
         mcp_discovery = get_mcp_discovery_service(session_factory=async_session)
         logger.info("MCP discovery service initialized")
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready")
+        # Sprint 16: Initialize Agent Scope Enforcement Service
+        agent_scope = get_agent_scope_service(session_factory=async_session)
+        logger.info("Agent scope enforcement service initialized")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 

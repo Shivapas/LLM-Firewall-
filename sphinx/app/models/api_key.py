@@ -558,6 +558,64 @@ class MCPCapability(Base):
     )
 
 
+# ── Sprint 16: Per-Agent Scope Enforcement ────────────────────────────────
+
+
+class AgentServiceAccount(Base):
+    """Service account for an AI agent with scope enforcement.
+
+    Each agent authenticates via a dedicated service account that carries:
+    - allowed MCP servers
+    - allowed tool names
+    - context scope (document tags/namespaces the agent may access)
+    - field-level redaction policy (sensitive fields to strip before agent sees content)
+    """
+    __tablename__ = "agent_service_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(256), default="")
+    description: Mapped[str] = mapped_column(String(512), default="")
+    # Scope: allowed MCP servers (by server_name)
+    allowed_mcp_servers: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    # Scope: allowed tool names (fully qualified)
+    allowed_tools: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    # Context scope: document tags/namespaces the agent may access
+    context_scope: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    # Field-level redaction: fields to strip from context before agent sees it
+    redact_fields: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    # Status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentScopeViolation(Base):
+    """Log of scope enforcement violations by agents."""
+    __tablename__ = "agent_scope_violations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(256), index=True)
+    violation_type: Mapped[str] = mapped_column(
+        String(64), index=True
+    )  # tool_blocked, context_filtered, field_redacted
+    tool_name: Mapped[str] = mapped_column(String(256), default="")
+    mcp_server: Mapped[str] = mapped_column(String(256), default="")
+    resource_id: Mapped[str] = mapped_column(String(256), default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class MCPRiskAlert(Base):
     """Alert generated for MCP risk events."""
     __tablename__ = "mcp_risk_alerts"

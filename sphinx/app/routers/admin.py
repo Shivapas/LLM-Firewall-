@@ -2313,3 +2313,155 @@ async def acknowledge_mcp_alert(alert_id: str, acknowledged_by: str = "admin"):
     if not svc.acknowledge_alert(alert_id, acknowledged_by=acknowledged_by):
         raise HTTPException(status_code=404, detail="Alert not found")
     return {"status": "acknowledged", "alert_id": alert_id}
+
+
+# ── Sprint 16: Per-Agent Scope Enforcement ───────────────────────────────
+
+
+class CreateAgentAccountRequest(BaseModel):
+    agent_id: str
+    display_name: str = ""
+    description: str = ""
+    allowed_mcp_servers: list[str] = []
+    allowed_tools: list[str] = []
+    context_scope: list[str] = []
+    redact_fields: list[str] = []
+
+
+class UpdateAgentAccountRequest(BaseModel):
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    allowed_mcp_servers: Optional[list[str]] = None
+    allowed_tools: Optional[list[str]] = None
+    context_scope: Optional[list[str]] = None
+    redact_fields: Optional[list[str]] = None
+    is_active: Optional[bool] = None
+
+
+class ToolCallValidationRequest(BaseModel):
+    agent_id: str
+    tool_name: str
+    mcp_server: str = ""
+
+
+@router.post("/agents")
+async def create_agent_account(body: CreateAgentAccountRequest):
+    """Create a new agent service account."""
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    svc = get_agent_scope_service()
+    try:
+        account = svc.create_account(
+            agent_id=body.agent_id,
+            display_name=body.display_name,
+            description=body.description,
+            allowed_mcp_servers=body.allowed_mcp_servers,
+            allowed_tools=body.allowed_tools,
+            context_scope=body.context_scope,
+            redact_fields=body.redact_fields,
+        )
+        return account.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.get("/agents")
+async def list_agent_accounts():
+    """List all agent service accounts."""
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    svc = get_agent_scope_service()
+    return [a.to_dict() for a in svc.list_accounts()]
+
+
+@router.get("/agents/{agent_id}")
+async def get_agent_account(agent_id: str):
+    """Get a specific agent service account."""
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    svc = get_agent_scope_service()
+    account = svc.get_account(agent_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Agent account not found")
+    return account.to_dict()
+
+
+@router.put("/agents/{agent_id}")
+async def update_agent_account(agent_id: str, body: UpdateAgentAccountRequest):
+    """Update an agent service account."""
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    svc = get_agent_scope_service()
+    account = svc.update_account(
+        agent_id=agent_id,
+        display_name=body.display_name,
+        description=body.description,
+        allowed_mcp_servers=body.allowed_mcp_servers,
+        allowed_tools=body.allowed_tools,
+        context_scope=body.context_scope,
+        redact_fields=body.redact_fields,
+        is_active=body.is_active,
+    )
+    if not account:
+        raise HTTPException(status_code=404, detail="Agent account not found")
+    return account.to_dict()
+
+
+@router.delete("/agents/{agent_id}")
+async def delete_agent_account(agent_id: str):
+    """Delete an agent service account."""
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    svc = get_agent_scope_service()
+    if not svc.delete_account(agent_id):
+        raise HTTPException(status_code=404, detail="Agent account not found")
+    return {"status": "deleted", "agent_id": agent_id}
+
+
+@router.post("/agents/validate-tool-call")
+async def validate_agent_tool_call(body: ToolCallValidationRequest):
+    """Validate whether an agent is allowed to invoke a tool.
+
+    Returns enforcement result: allowed or blocked with reason.
+    """
+    from app.services.mcp.agent_scope import get_agent_scope_service, ToolCallRequest
+
+    svc = get_agent_scope_service()
+    request = ToolCallRequest(
+        agent_id=body.agent_id,
+        tool_name=body.tool_name,
+        mcp_server=body.mcp_server,
+    )
+    result = svc.enforce_tool_access(request)
+    return {
+        "allowed": result.allowed,
+        "action": result.action,
+        "reason": result.reason,
+    }
+
+
+@router.get("/agents/{agent_id}/violations")
+async def list_agent_violations(
+    agent_id: str,
+    violation_type: Optional[str] = None,
+    limit: int = 100,
+):
+    """List scope violations for an agent."""
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    svc = get_agent_scope_service()
+    violations = svc.list_violations(
+        agent_id=agent_id,
+        violation_type=violation_type,
+        limit=limit,
+    )
+    return [v.to_dict() for v in violations]
+
+
+@router.get("/agents/{agent_id}/violation-counts")
+async def get_agent_violation_counts(agent_id: str):
+    """Get violation counts by type for an agent."""
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    svc = get_agent_scope_service()
+    return svc.get_violation_counts(agent_id=agent_id)
