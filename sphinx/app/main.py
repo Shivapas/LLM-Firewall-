@@ -18,6 +18,7 @@ from app.services.threat_detection.tier2_scanner import get_tier2_scanner
 from app.services.health_probe import get_health_probe
 from app.services.circuit_breaker import sync_circuit_breakers_from_db
 from app.services.failover_policy import get_failover_engine
+from app.services.mcp.discovery import get_mcp_discovery_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -112,7 +113,11 @@ async def lifespan(app: FastAPI):
         failover_engine = get_failover_engine(async_session)
         await failover_engine.start()
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active")
+        # Sprint 15: Initialize MCP Discovery Service
+        mcp_discovery = get_mcp_discovery_service(session_factory=async_session)
+        logger.info("MCP discovery service initialized")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
