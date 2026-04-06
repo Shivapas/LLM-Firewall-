@@ -3410,3 +3410,222 @@ async def get_unsigned_checklist_items():
         }
         for i in items
     ]
+
+
+# ── Sprint 21: Multilingual Threat Detection + EU AI Act Controls ─────────
+
+
+@router.get("/multilingual/status")
+async def get_multilingual_status():
+    """Get multilingual threat detection system status."""
+    from app.services.multilingual.unicode_normalizer import get_unicode_normalizer
+    from app.services.multilingual.multilingual_detector import get_multilingual_detector
+    from app.services.multilingual.language_detector import get_language_router
+
+    normalizer = get_unicode_normalizer()
+    detector = get_multilingual_detector()
+    router_svc = get_language_router()
+
+    return {
+        "unicode_normalizer": normalizer.get_stats(),
+        "multilingual_detector": detector.get_stats(),
+        "supported_languages": router_svc.detector.get_supported_languages(),
+    }
+
+
+@router.post("/multilingual/scan")
+async def multilingual_scan(body: dict):
+    """Scan text with full multilingual pipeline: normalize -> detect language -> scan."""
+    from app.services.multilingual.unicode_normalizer import get_unicode_normalizer
+    from app.services.multilingual.multilingual_detector import get_multilingual_detector
+    from app.services.multilingual.language_detector import get_language_router
+
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="text field required")
+
+    normalizer = get_unicode_normalizer()
+    detector = get_multilingual_detector()
+    lang_router = get_language_router()
+
+    # Step 1: Normalize Unicode
+    normalized = normalizer.normalize(text)
+    obfuscation = normalizer.detect_obfuscation(text)
+
+    # Step 2: Detect language and route
+    lang_result, routing = lang_router.route(normalized)
+
+    # Step 3: Run multilingual scan
+    ml_result = detector.scan(normalized, detected_language=lang_result.language)
+
+    return {
+        "normalized_text": normalized,
+        "obfuscation": obfuscation,
+        "language_detection": lang_result.to_dict(),
+        "routing_decision": routing.to_dict(),
+        "multilingual_scan": ml_result.to_dict(),
+    }
+
+
+@router.post("/multilingual/normalize")
+async def normalize_text(body: dict):
+    """Normalize Unicode text and detect obfuscation techniques."""
+    from app.services.multilingual.unicode_normalizer import get_unicode_normalizer
+
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="text field required")
+
+    normalizer = get_unicode_normalizer()
+    return normalizer.detect_obfuscation(text)
+
+
+@router.post("/multilingual/detect-language")
+async def detect_language(body: dict):
+    """Detect the language of input text."""
+    from app.services.multilingual.language_detector import get_language_router
+
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="text field required")
+
+    lang_router = get_language_router()
+    detection, routing = lang_router.route(text)
+    return {
+        "detection": detection.to_dict(),
+        "routing": routing.to_dict(),
+    }
+
+
+@router.get("/eu-ai-act/dashboard")
+async def get_eu_ai_act_dashboard():
+    """Get EU AI Act risk classification dashboard."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+    svc = get_eu_ai_act_service()
+    return svc.get_dashboard().to_dict()
+
+
+@router.post("/eu-ai-act/applications")
+async def register_ai_application(body: dict):
+    """Register a new AI application for EU AI Act classification."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+
+    name = body.get("name", "")
+    if not name:
+        raise HTTPException(status_code=400, detail="name field required")
+
+    svc = get_eu_ai_act_service()
+    app = svc.register_application(
+        name=name,
+        description=body.get("description", ""),
+        category=body.get("category", "general_assistant"),
+        provider=body.get("provider", ""),
+        model=body.get("model", ""),
+        tenant_id=body.get("tenant_id", ""),
+        compliance_notes=body.get("compliance_notes", ""),
+    )
+    return app.to_dict()
+
+
+@router.get("/eu-ai-act/applications")
+async def list_ai_applications(risk_tier: Optional[str] = None):
+    """List registered AI applications, optionally filtered by risk tier."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service, EURiskTier
+
+    svc = get_eu_ai_act_service()
+    tier = None
+    if risk_tier:
+        try:
+            tier = EURiskTier(risk_tier)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid risk tier: {risk_tier}")
+
+    apps = svc.list_applications(risk_tier=tier)
+    return [a.to_dict() for a in apps]
+
+
+@router.get("/eu-ai-act/applications/{app_id}")
+async def get_ai_application(app_id: str):
+    """Get a registered AI application by ID."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+
+    svc = get_eu_ai_act_service()
+    app = svc.get_application(app_id)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return app.to_dict()
+
+
+@router.patch("/eu-ai-act/applications/{app_id}")
+async def update_ai_application(app_id: str, body: dict):
+    """Update an AI application's risk classification."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+
+    svc = get_eu_ai_act_service()
+    category = body.get("category")
+    if not category:
+        raise HTTPException(status_code=400, detail="category field required")
+
+    app = svc.update_classification(app_id, category)
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    return app.to_dict()
+
+
+@router.delete("/eu-ai-act/applications/{app_id}")
+async def remove_ai_application(app_id: str):
+    """Remove a registered AI application."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+
+    svc = get_eu_ai_act_service()
+    if not svc.remove_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    return {"status": "removed", "app_id": app_id}
+
+
+@router.get("/eu-ai-act/classification-rules")
+async def get_classification_rules():
+    """Get all EU AI Act risk classification rules."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+    svc = get_eu_ai_act_service()
+    return svc.get_classification_rules()
+
+
+@router.post("/eu-ai-act/transparency-events")
+async def log_transparency_event(body: dict):
+    """Log a transparency event per EU AI Act Article 50."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+
+    svc = get_eu_ai_act_service()
+    event = svc.log_transparency_event(
+        app_id=body.get("app_id", ""),
+        tenant_id=body.get("tenant_id", ""),
+        model=body.get("model", ""),
+        provider=body.get("provider", ""),
+        output_content=body.get("output_content", ""),
+        input_content=body.get("input_content", ""),
+        content_type=body.get("content_type", "text"),
+        metadata=body.get("metadata"),
+    )
+    return event.to_dict()
+
+
+@router.get("/eu-ai-act/transparency-events")
+async def get_transparency_events(
+    app_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    limit: int = 100,
+):
+    """Query transparency events."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+    svc = get_eu_ai_act_service()
+    events = svc.get_transparency_events(app_id=app_id, tenant_id=tenant_id, limit=limit)
+    return [e.to_dict() for e in events]
+
+
+@router.get("/eu-ai-act/stats")
+async def get_eu_ai_act_stats():
+    """Get EU AI Act service statistics."""
+    from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+    svc = get_eu_ai_act_service()
+    return svc.get_stats()

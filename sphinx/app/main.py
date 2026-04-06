@@ -41,6 +41,10 @@ from app.services.performance.profiler import (
     get_cache_monitor,
 )
 from app.services.security.ga_checklist import get_ga_checklist_service
+from app.services.multilingual.unicode_normalizer import get_unicode_normalizer
+from app.services.multilingual.multilingual_detector import get_multilingual_detector
+from app.services.multilingual.language_detector import get_language_router
+from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -210,7 +214,22 @@ async def lifespan(app: FastAPI):
         ga_checklist = get_ga_checklist_service(session_factory=async_session)
         logger.info("Sprint 20: Performance profiling and GA checklist initialized")
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready")
+        # Sprint 21: Multilingual Threat Detection + EU AI Act Controls
+        unicode_normalizer = get_unicode_normalizer()
+        logger.info("Unicode normalizer initialized: %d homoglyph mappings",
+                     unicode_normalizer.get_stats()["homoglyph_mappings"])
+
+        multilingual_detector = get_multilingual_detector()
+        logger.info("Multilingual threat detector initialized: %d embeddings, %d languages",
+                     multilingual_detector.index_size, multilingual_detector.supported_language_count)
+
+        language_router = get_language_router()
+        logger.info("Language detection and routing initialized")
+
+        eu_ai_act = get_eu_ai_act_service()
+        logger.info("EU AI Act risk classification and transparency logging initialized")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
