@@ -44,6 +44,12 @@ class CollectionPolicy:
     max_results: int = 10
     is_active: bool = True
     tenant_id: str = "*"
+    # Sprint 9: Chunk scanning & indirect injection prevention
+    scan_chunks_for_injection: bool = True
+    block_sensitive_documents: bool = False
+    sensitive_field_patterns: list[str] = field(default_factory=list)
+    anomaly_distance_threshold: float = 0.0  # 0 = disabled
+    max_tokens_per_chunk: int = 512
 
 
 @dataclass
@@ -76,6 +82,15 @@ class ProxyResult:
     documents: list[dict[str, Any]] = field(default_factory=list)
     blocked_reason: str | None = None
     latency_ms: float = 0.0
+    # Sprint 9: Chunk scan results
+    chunks_scanned: bool = False
+    chunks_blocked: int = 0
+    injection_blocks: int = 0
+    sensitive_field_blocks: int = 0
+    anomaly_detected: bool = False
+    anomaly_distance: float = 0.0
+    context_minimized: bool = False
+    incidents: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         d = {
@@ -93,6 +108,17 @@ class ProxyResult:
         }
         if self.blocked_reason:
             d["blocked_reason"] = self.blocked_reason
+        if self.chunks_scanned:
+            d["chunks_scanned"] = True
+            d["chunks_blocked"] = self.chunks_blocked
+            d["injection_blocks"] = self.injection_blocks
+            d["sensitive_field_blocks"] = self.sensitive_field_blocks
+            d["context_minimized"] = self.context_minimized
+        if self.anomaly_detected:
+            d["anomaly_detected"] = True
+            d["anomaly_distance"] = round(self.anomaly_distance, 6)
+        if self.incidents:
+            d["incident_count"] = len(self.incidents)
         return d
 
 
@@ -228,6 +254,24 @@ class VectorDBProxy:
         else:
             result.enforced_top_k = request.top_k
 
+        # Step 6 (Sprint 9): Chunk scanning & indirect injection prevention
+        if request.operation == VectorOperation.QUERY and result.documents:
+            scan_result = self._scan_chunks(result.documents, policy, request)
+            result.chunks_scanned = True
+            result.chunks_blocked = scan_result.blocked_chunks
+            result.injection_blocks = scan_result.injection_blocks
+            result.sensitive_field_blocks = scan_result.sensitive_field_blocks
+            result.anomaly_detected = scan_result.anomaly_detected
+            result.anomaly_distance = scan_result.anomaly_distance
+            result.context_minimized = scan_result.context_limit_applied
+            result.incidents = scan_result.incidents
+            # Replace documents with only allowed ones
+            result.documents = scan_result.allowed_documents
+
+            # Log incidents for blocked chunks
+            if scan_result.incidents:
+                self._log_incidents(scan_result, policy, request.tenant_id)
+
         if policy.default_action == ProxyAction.MONITOR:
             self._stats["monitored"] += 1
         else:
@@ -236,6 +280,75 @@ class VectorDBProxy:
         result.allowed = True
         result.latency_ms = (time.perf_counter() - start) * 1000
         return result
+
+    def _scan_chunks(
+        self,
+        documents: list[dict[str, Any]],
+        policy: "CollectionPolicy",
+        request: "ProxyRequest",
+    ) -> "ChunkScanBatchResult":
+        """Run chunk scanner on retrieved documents."""
+        from app.services.vectordb.chunk_scanner import (
+            ChunkScanner, ChunkScanPolicy, get_chunk_scanner,
+        )
+
+        scanner = get_chunk_scanner()
+        scan_policy = ChunkScanPolicy(
+            scan_for_injection=policy.scan_chunks_for_injection,
+            block_sensitive_documents=policy.block_sensitive_documents,
+            sensitive_fields=policy.sensitive_fields,
+            sensitive_field_patterns=policy.sensitive_field_patterns,
+            max_chunks=policy.max_results,
+            max_tokens_per_chunk=policy.max_tokens_per_chunk,
+            anomaly_distance_threshold=policy.anomaly_distance_threshold,
+            collection_name=policy.collection_name,
+            tenant_id=request.tenant_id,
+        )
+
+        return scanner.scan_chunks(
+            documents=documents,
+            policy=scan_policy,
+            query_embedding=request.query_vector,
+            collection_centroid=request.metadata.get("collection_centroid"),
+        )
+
+    def _log_incidents(
+        self,
+        scan_result: "ChunkScanBatchResult",
+        policy: "CollectionPolicy",
+        tenant_id: str,
+    ) -> None:
+        """Log incidents from chunk scanning."""
+        from app.services.vectordb.chunk_scanner import get_incident_logger
+
+        incident_logger = get_incident_logger()
+        for chunk_res in scan_result.chunk_results:
+            if not chunk_res.blocked:
+                continue
+            if chunk_res.threat_score and chunk_res.threat_score.score > 0:
+                incident_logger.record_injection_incident(
+                    chunk_id=chunk_res.chunk_id,
+                    content_hash=chunk_res.content_hash,
+                    collection_name=policy.collection_name,
+                    tenant_id=tenant_id,
+                    threat_score=chunk_res.threat_score,
+                )
+            if chunk_res.sensitive_field_matched:
+                incident_logger.record_sensitive_field_incident(
+                    chunk_id=chunk_res.chunk_id,
+                    content_hash=chunk_res.content_hash,
+                    collection_name=policy.collection_name,
+                    tenant_id=tenant_id,
+                    matched_fields=chunk_res.matched_sensitive_fields,
+                )
+
+        if scan_result.anomaly_detected:
+            incident_logger.record_anomaly_incident(
+                collection_name=policy.collection_name,
+                tenant_id=tenant_id,
+                distance=scan_result.anomaly_distance,
+                threshold=policy.anomaly_distance_threshold,
+            )
 
     def _inject_namespace(self, request: ProxyRequest, policy: CollectionPolicy) -> ProxyRequest:
         """Inject mandatory tenant namespace filter into the query.
