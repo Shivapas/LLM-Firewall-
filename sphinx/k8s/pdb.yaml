@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sphinx-gateway-pdb
+  namespace: sphinx
+  labels:
+    app.kubernetes.io/name: sphinx-gateway
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sphinx-gateway

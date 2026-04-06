@@ -34,6 +34,13 @@ from app.services.dashboard.incident_manager import get_incident_management_serv
 from app.services.dashboard.alert_engine import get_alert_engine_service
 from app.services.dashboard.tenant_usage import get_tenant_usage_dashboard
 from app.services.dashboard.onboarding_wizard import get_onboarding_wizard_service
+from app.services.performance.profiler import (
+    get_memory_profiler,
+    get_cpu_profiler,
+    get_regex_auditor,
+    get_cache_monitor,
+)
+from app.services.security.ga_checklist import get_ga_checklist_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -192,7 +199,18 @@ async def lifespan(app: FastAPI):
         onboarding = get_onboarding_wizard_service(session_factory=async_session)
         logger.info("Onboarding wizard service initialized")
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready")
+        # Sprint 20: Performance profiling & GA checklist
+        memory_profiler = get_memory_profiler()
+        cpu_profiler = get_cpu_profiler()
+        regex_auditor = get_regex_auditor()
+        cache_monitor = get_cache_monitor()
+        cache_monitor.register_cache("policy_cache", max_size=1000)
+        cache_monitor.register_cache("threat_pattern_cache", max_size=500)
+        cache_monitor.register_cache("pii_cache", max_size=200)
+        ga_checklist = get_ga_checklist_service(session_factory=async_session)
+        logger.info("Sprint 20: Performance profiling and GA checklist initialized")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
@@ -234,7 +252,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sphinx AI Mesh Firewall",
     description="Gateway proxy for LLM provider traffic with multi-provider routing and audit",
-    version="0.9.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
 

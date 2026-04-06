@@ -3148,3 +3148,265 @@ async def reset_onboarding(tenant_id: str):
     svc = get_onboarding_wizard_service()
     status = await svc.reset_progress(tenant_id)
     return status.model_dump()
+
+
+# ── Sprint 20: Performance Profiling ──
+
+
+@router.get("/profiling/memory")
+async def get_memory_profile():
+    """Get memory profiling report."""
+    from app.services.performance.profiler import get_memory_profiler
+    profiler = get_memory_profiler()
+    return profiler.get_report()
+
+
+@router.post("/profiling/memory/snapshot")
+async def take_memory_snapshot():
+    """Take a memory snapshot."""
+    from app.services.performance.profiler import get_memory_profiler
+    profiler = get_memory_profiler()
+    snap = profiler.take_snapshot()
+    return {
+        "timestamp": snap.timestamp,
+        "rss_mb": snap.rss_mb,
+        "tracemalloc_current_mb": snap.tracemalloc_current_mb,
+        "tracemalloc_peak_mb": snap.tracemalloc_peak_mb,
+        "gc_objects": snap.gc_objects,
+    }
+
+
+@router.post("/profiling/memory/tracing/{action}")
+async def memory_tracing(action: str):
+    """Start or stop memory tracing. Action: 'start' or 'stop'."""
+    from app.services.performance.profiler import get_memory_profiler
+    profiler = get_memory_profiler()
+    if action == "start":
+        profiler.start_tracing()
+        return {"status": "tracing_started"}
+    elif action == "stop":
+        profiler.stop_tracing()
+        return {"status": "tracing_stopped"}
+    raise HTTPException(status_code=400, detail="Action must be 'start' or 'stop'")
+
+
+@router.get("/profiling/memory/leak-check")
+async def check_memory_leak():
+    """Run heuristic memory leak detection."""
+    from app.services.performance.profiler import get_memory_profiler
+    profiler = get_memory_profiler()
+    result = profiler.detect_leak()
+    return result or {"detected": False, "message": "Insufficient data for analysis"}
+
+
+@router.get("/profiling/cpu")
+async def get_cpu_profile():
+    """Get CPU profiling hotspot report."""
+    from app.services.performance.profiler import get_cpu_profiler
+    profiler = get_cpu_profiler()
+    return profiler.get_hotspot_report()
+
+
+@router.post("/profiling/cpu/{action}")
+async def cpu_profiling(action: str):
+    """Enable or disable CPU profiling. Action: 'enable' or 'disable'."""
+    from app.services.performance.profiler import get_cpu_profiler
+    profiler = get_cpu_profiler()
+    if action == "enable":
+        profiler.enable()
+        return {"status": "cpu_profiling_enabled"}
+    elif action == "disable":
+        profiler.disable()
+        return {"status": "cpu_profiling_disabled"}
+    raise HTTPException(status_code=400, detail="Action must be 'enable' or 'disable'")
+
+
+@router.get("/profiling/regex-audit")
+async def get_regex_audit():
+    """Audit threat detection regex patterns for performance issues."""
+    from app.services.performance.profiler import get_regex_auditor
+    from app.services.threat_detection.engine import get_threat_engine
+    auditor = get_regex_auditor()
+    try:
+        engine = get_threat_engine()
+        patterns = [p.pattern for p in engine.library.patterns if hasattr(p, "pattern")]
+        return auditor.audit_patterns(patterns)
+    except Exception:
+        return {"total_patterns": 0, "findings": [], "finding_count": 0, "avg_compilation_ms": 0}
+
+
+@router.get("/profiling/cache")
+async def get_cache_stats():
+    """Get cache efficiency statistics."""
+    from app.services.performance.profiler import get_cache_monitor
+    monitor = get_cache_monitor()
+    return monitor.get_report()
+
+
+# ── Sprint 20: Security Penetration Test ──
+
+
+@router.post("/security/pentest/run")
+async def run_pentest():
+    """Execute automated security penetration tests against the gateway."""
+    from app.services.security.pentest import SecurityTestSuite
+    suite = SecurityTestSuite()
+    report = await suite.run_all()
+    return {
+        "scan_id": report.scan_id,
+        "duration_seconds": report.duration_seconds,
+        "total_tests": report.total_tests,
+        "passed_tests": report.passed_tests,
+        "failed_tests": report.failed_tests,
+        "critical_count": report.critical_count,
+        "high_count": report.high_count,
+        "medium_count": report.medium_count,
+        "low_count": report.low_count,
+        "info_count": report.info_count,
+        "unresolved_critical_high": report.unresolved_critical_high,
+        "findings": [
+            {
+                "id": f.id,
+                "test_name": f.test_name,
+                "category": f.category,
+                "severity": f.severity,
+                "title": f.title,
+                "description": f.description,
+                "remediation": f.remediation,
+                "status": f.status,
+                "cwe_id": f.cwe_id,
+                "owasp_ref": f.owasp_ref,
+            }
+            for f in report.findings
+        ],
+    }
+
+
+@router.get("/security/pentest/tests")
+async def list_pentest_tests():
+    """List all available security test definitions."""
+    from app.services.security.pentest import SecurityTestSuite
+    suite = SecurityTestSuite()
+    return suite.get_all_test_definitions()
+
+
+# ── Sprint 20: GA Release Checklist ──
+
+
+@router.get("/ga-checklist")
+async def get_ga_checklist():
+    """Get GA release checklist status."""
+    from app.services.security.ga_checklist import get_ga_checklist_service
+    svc = get_ga_checklist_service()
+    status = svc.get_status()
+    return {
+        "checklist_id": status.checklist_id,
+        "version": status.version,
+        "total_items": status.total_items,
+        "signed_off_items": status.signed_off_items,
+        "required_items": status.required_items,
+        "required_signed_off": status.required_signed_off,
+        "progress_percentage": status.progress_percentage,
+        "ga_ready": status.ga_ready,
+        "items": [
+            {
+                "id": i.id,
+                "category": i.category,
+                "title": i.title,
+                "description": i.description,
+                "required": i.required,
+                "signoff_role": i.signoff_role,
+                "signed_off": i.signed_off,
+                "signed_off_by": i.signed_off_by,
+                "signed_off_at": i.signed_off_at,
+                "notes": i.notes,
+            }
+            for i in status.items
+        ],
+    }
+
+
+class SignOffBody(BaseModel):
+    signed_by: str
+    notes: str = ""
+
+
+@router.post("/ga-checklist/{item_id}/sign-off")
+async def sign_off_checklist_item(item_id: str, body: SignOffBody):
+    """Sign off a GA checklist item."""
+    from app.services.security.ga_checklist import get_ga_checklist_service
+    svc = get_ga_checklist_service()
+    try:
+        item = svc.sign_off_item(item_id, signed_by=body.signed_by, notes=body.notes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "id": item.id,
+        "signed_off": item.signed_off,
+        "signed_off_by": item.signed_off_by,
+        "signed_off_at": item.signed_off_at,
+    }
+
+
+@router.post("/ga-checklist/{item_id}/revoke")
+async def revoke_checklist_signoff(item_id: str):
+    """Revoke sign-off for a GA checklist item."""
+    from app.services.security.ga_checklist import get_ga_checklist_service
+    svc = get_ga_checklist_service()
+    try:
+        item = svc.revoke_signoff(item_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"id": item.id, "signed_off": item.signed_off}
+
+
+@router.post("/ga-checklist/reset")
+async def reset_ga_checklist():
+    """Reset the entire GA checklist."""
+    from app.services.security.ga_checklist import get_ga_checklist_service
+    svc = get_ga_checklist_service()
+    status = svc.reset()
+    return {
+        "checklist_id": status.checklist_id,
+        "total_items": status.total_items,
+        "signed_off_items": status.signed_off_items,
+        "ga_ready": status.ga_ready,
+    }
+
+
+@router.get("/ga-checklist/category/{category}")
+async def get_checklist_by_category(category: str):
+    """Get GA checklist items by category."""
+    from app.services.security.ga_checklist import get_ga_checklist_service
+    svc = get_ga_checklist_service()
+    items = svc.get_items_by_category(category)
+    if not items:
+        raise HTTPException(status_code=404, detail=f"No items found for category: {category}")
+    return [
+        {
+            "id": i.id,
+            "category": i.category,
+            "title": i.title,
+            "signed_off": i.signed_off,
+            "signoff_role": i.signoff_role,
+        }
+        for i in items
+    ]
+
+
+@router.get("/ga-checklist/unsigned")
+async def get_unsigned_checklist_items():
+    """Get all unsigned GA checklist items."""
+    from app.services.security.ga_checklist import get_ga_checklist_service
+    svc = get_ga_checklist_service()
+    items = svc.get_unsigned_items()
+    return [
+        {
+            "id": i.id,
+            "category": i.category,
+            "title": i.title,
+            "required": i.required,
+            "signoff_role": i.signoff_role,
+        }
+        for i in items
+    ]
