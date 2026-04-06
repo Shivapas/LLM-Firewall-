@@ -307,6 +307,69 @@ class CollectionAuditLogRecord(Base):
     )
 
 
+class RoutingRule(Base):
+    """Configurable routing rule for sensitivity-based model routing.
+
+    Rules are evaluated in priority order (lower number = higher priority).
+    First matching rule wins; unmatched requests fall through to default routing.
+    """
+    __tablename__ = "routing_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    priority: Mapped[int] = mapped_column(Integer, default=100)  # lower = higher priority
+    # Condition fields
+    condition_type: Mapped[str] = mapped_column(
+        String(64), default="sensitivity"
+    )  # sensitivity, budget, compliance_tag, kill_switch, composite
+    condition_json: Mapped[str] = mapped_column(
+        Text, default="{}"
+    )  # e.g. {"tags": ["PII","PHI"], "operator": "any"} or {"budget_exceeded": true}
+    # Action fields
+    target_model: Mapped[str] = mapped_column(String(128), default="")
+    target_provider: Mapped[str] = mapped_column(String(64), default="")
+    action: Mapped[str] = mapped_column(
+        String(32), default="route"
+    )  # route, downgrade, block
+    # Scope
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="*")  # * = global
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class BudgetTier(Base):
+    """Budget tier configuration for model downgrade chains.
+
+    Defines token budget thresholds and downgrade targets per model.
+    """
+    __tablename__ = "budget_tiers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    model_name: Mapped[str] = mapped_column(String(128), index=True)
+    tier_name: Mapped[str] = mapped_column(String(64), default="standard")  # premium, standard, economy
+    token_budget: Mapped[int] = mapped_column(Integer, default=1000000)  # tokens per budget window
+    downgrade_model: Mapped[str] = mapped_column(String(128), default="")  # model to downgrade to when budget exceeded
+    budget_window_seconds: Mapped[int] = mapped_column(Integer, default=3600)  # 1 hour default
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="*")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ProviderCredential(Base):
     __tablename__ = "provider_credentials"
 

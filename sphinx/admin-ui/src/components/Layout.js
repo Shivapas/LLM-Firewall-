@@ -38,6 +38,7 @@ export default function Layout() {
                     <Link to="/policy-versions" style={styles.navLink(location.pathname === '/policy-versions')}>Policy Versions</Link>
                     <Link to="/vector-db" style={styles.navLink(location.pathname === '/vector-db')}>Vector DB</Link>
                     <Link to="/vector-dashboard" style={styles.navLink(location.pathname === '/vector-dashboard')}>Vector Dashboard</Link>
+                    <Link to="/routing-rules" style={styles.navLink(location.pathname === '/routing-rules')}>Routing Rules</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>
