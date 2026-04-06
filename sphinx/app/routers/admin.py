@@ -3629,3 +3629,349 @@ async def get_eu_ai_act_stats():
     from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
     svc = get_eu_ai_act_service()
     return svc.get_stats()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sprint 22 — Language Packs, Cross-Language Detection, EU AI Act Docs, Benchmark
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/multilingual/language-packs")
+async def get_language_packs():
+    """Get available language-specific threat pattern packs."""
+    from app.services.multilingual.language_packs import get_language_pack_scanner
+    scanner = get_language_pack_scanner()
+    return {
+        "packs": [p.to_dict() for p in scanner.get_language_packs()],
+        "stats": scanner.get_stats(),
+    }
+
+
+@router.get("/multilingual/coverage-matrix")
+async def get_coverage_matrix():
+    """Get language coverage matrix showing detection support for all languages."""
+    from app.services.multilingual.language_packs import get_language_pack_scanner
+    scanner = get_language_pack_scanner()
+    return scanner.get_coverage_matrix()
+
+
+@router.post("/multilingual/scan-with-packs")
+async def scan_with_language_packs(body: dict):
+    """Scan text with full pipeline including language pack patterns and cross-language detection."""
+    from app.services.multilingual.unicode_normalizer import get_unicode_normalizer
+    from app.services.multilingual.multilingual_detector import get_multilingual_detector
+    from app.services.multilingual.language_detector import get_language_router
+    from app.services.multilingual.language_packs import get_language_pack_scanner
+    from app.services.multilingual.cross_language_detector import get_cross_language_detector
+
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="text field required")
+
+    normalizer = get_unicode_normalizer()
+    detector = get_multilingual_detector()
+    lang_router = get_language_router()
+    pack_scanner = get_language_pack_scanner()
+    cross_lang = get_cross_language_detector()
+
+    # Step 1: Normalize Unicode
+    normalized = normalizer.normalize(text)
+    obfuscation = normalizer.detect_obfuscation(text)
+
+    # Step 2: Detect language and route
+    lang_result, routing = lang_router.route(normalized)
+
+    # Step 3: Run multilingual embedding scan
+    ml_result = detector.scan(normalized, detected_language=lang_result.language)
+
+    # Step 4: Run language pack regex scan
+    pack_matches = pack_scanner.scan(normalized, language_hint=lang_result.language)
+
+    # Step 5: Run cross-language attack detection
+    cross_lang_result = cross_lang.detect(normalized)
+
+    return {
+        "normalized_text": normalized,
+        "obfuscation": obfuscation,
+        "language_detection": lang_result.to_dict(),
+        "routing_decision": routing.to_dict(),
+        "multilingual_scan": ml_result.to_dict(),
+        "language_pack_matches": [m.to_dict() for m in pack_matches],
+        "cross_language_analysis": cross_lang_result.to_dict(),
+    }
+
+
+@router.post("/multilingual/cross-language-detect")
+async def cross_language_detect(body: dict):
+    """Detect cross-language attacks in mixed-language prompts."""
+    from app.services.multilingual.cross_language_detector import get_cross_language_detector
+
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="text field required")
+
+    detector = get_cross_language_detector()
+    result = detector.detect(text)
+    return result.to_dict()
+
+
+@router.post("/multilingual/benchmark/run")
+async def run_multilingual_benchmark():
+    """Run the multilingual detection latency benchmark. Returns p99 latencies per language."""
+    from app.services.multilingual.benchmark import get_multilingual_benchmark
+    benchmark = get_multilingual_benchmark()
+    report = benchmark.run()
+    return report.to_dict()
+
+
+@router.get("/multilingual/benchmark/last")
+async def get_last_benchmark():
+    """Get the most recent benchmark report."""
+    from app.services.multilingual.benchmark import get_multilingual_benchmark
+    benchmark = get_multilingual_benchmark()
+    report = benchmark.last_report
+    if not report:
+        raise HTTPException(status_code=404, detail="No benchmark has been run yet")
+    return report.to_dict()
+
+
+# --- EU AI Act Article 14 — Human Oversight ---
+
+
+@router.post("/eu-ai-act/overseers")
+async def designate_overseer(body: dict):
+    """Designate a human overseer per EU AI Act Article 14."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+
+    name = body.get("name", "")
+    if not name:
+        raise HTTPException(status_code=400, detail="name field required")
+
+    svc = get_human_oversight_service()
+    overseer = svc.designate_overseer(
+        name=name,
+        role=body.get("role", ""),
+        email=body.get("email", ""),
+        department=body.get("department", ""),
+        authority_level=body.get("authority_level", "standard"),
+    )
+    return overseer.to_dict()
+
+
+@router.get("/eu-ai-act/overseers")
+async def list_overseers():
+    """List all designated human overseers."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+    svc = get_human_oversight_service()
+    return [o.to_dict() for o in svc.list_overseers()]
+
+
+@router.delete("/eu-ai-act/overseers/{overseer_id}")
+async def remove_overseer(overseer_id: str):
+    """Remove a designated human overseer."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+    svc = get_human_oversight_service()
+    if not svc.remove_overseer(overseer_id):
+        raise HTTPException(status_code=404, detail="Overseer not found")
+    return {"status": "removed", "overseer_id": overseer_id}
+
+
+@router.post("/eu-ai-act/checkpoints")
+async def add_hitl_checkpoint(body: dict):
+    """Add a HITL checkpoint for an AI application."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+
+    app_id = body.get("app_id", "")
+    if not app_id:
+        raise HTTPException(status_code=400, detail="app_id field required")
+
+    checkpoint_type = body.get("checkpoint_type", "runtime_approval")
+    svc = get_human_oversight_service()
+    try:
+        checkpoint = svc.add_checkpoint(
+            app_id=app_id,
+            checkpoint_type=checkpoint_type,
+            description=body.get("description", ""),
+            is_mandatory=body.get("is_mandatory", True),
+            overseer_ids=body.get("overseer_ids", []),
+            trigger_conditions=body.get("trigger_conditions", ""),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return checkpoint.to_dict()
+
+
+@router.get("/eu-ai-act/checkpoints")
+async def list_hitl_checkpoints(app_id: Optional[str] = None):
+    """List HITL checkpoints, optionally filtered by app_id."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+    svc = get_human_oversight_service()
+    return [cp.to_dict() for cp in svc.get_checkpoints(app_id)]
+
+
+@router.delete("/eu-ai-act/checkpoints/{checkpoint_id}")
+async def remove_hitl_checkpoint(checkpoint_id: str):
+    """Remove a HITL checkpoint."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+    svc = get_human_oversight_service()
+    if not svc.remove_checkpoint(checkpoint_id):
+        raise HTTPException(status_code=404, detail="Checkpoint not found")
+    return {"status": "removed", "checkpoint_id": checkpoint_id}
+
+
+@router.post("/eu-ai-act/oversight-events")
+async def log_oversight_event(body: dict):
+    """Log a human oversight event."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+
+    app_id = body.get("app_id", "")
+    if not app_id:
+        raise HTTPException(status_code=400, detail="app_id field required")
+
+    svc = get_human_oversight_service()
+    try:
+        event = svc.log_oversight_event(
+            app_id=app_id,
+            checkpoint_id=body.get("checkpoint_id", ""),
+            overseer_id=body.get("overseer_id", ""),
+            event_type=body.get("event_type", "review"),
+            decision=body.get("decision", ""),
+            reason=body.get("reason", ""),
+            metadata=body.get("metadata"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return event.to_dict()
+
+
+@router.get("/eu-ai-act/oversight-events")
+async def get_oversight_events(
+    app_id: Optional[str] = None,
+    overseer_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 100,
+):
+    """Query human oversight events."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+    svc = get_human_oversight_service()
+    events = svc.get_oversight_events(
+        app_id=app_id, overseer_id=overseer_id, event_type=event_type, limit=limit,
+    )
+    return [e.to_dict() for e in events]
+
+
+@router.get("/eu-ai-act/article14-documentation")
+async def get_article14_documentation(app_id: Optional[str] = None):
+    """Generate EU AI Act Article 14 human oversight documentation."""
+    from app.services.multilingual.eu_ai_act_docs import get_human_oversight_service
+    svc = get_human_oversight_service()
+    return svc.generate_article14_documentation(app_id)
+
+
+# --- EU AI Act Article 11 — Technical Documentation ---
+
+
+@router.post("/eu-ai-act/technical-docs")
+async def create_technical_doc(body: dict):
+    """Create an Article 11 technical documentation entry for an AI application."""
+    from app.services.multilingual.eu_ai_act_docs import get_technical_doc_service
+
+    app_id = body.get("app_id", "")
+    if not app_id:
+        raise HTTPException(status_code=400, detail="app_id field required")
+
+    svc = get_technical_doc_service()
+    entry = svc.create_entry(
+        app_id=app_id,
+        system_description=body.get("system_description", ""),
+        architecture_summary=body.get("architecture_summary", ""),
+        intended_purpose=body.get("intended_purpose", ""),
+        risk_management=body.get("risk_management", ""),
+        monitoring_plan=body.get("monitoring_plan", ""),
+    )
+    return entry.to_dict()
+
+
+@router.get("/eu-ai-act/technical-docs/{app_id}")
+async def get_technical_doc(app_id: str):
+    """Get the technical documentation entry for an AI application."""
+    from app.services.multilingual.eu_ai_act_docs import get_technical_doc_service
+    svc = get_technical_doc_service()
+    entry = svc.get_entry(app_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Technical doc entry not found")
+    return entry.to_dict()
+
+
+@router.post("/eu-ai-act/technical-docs/{app_id}/training-data")
+async def set_training_data(app_id: str, body: dict):
+    """Set training data description for an application's technical doc."""
+    from app.services.multilingual.eu_ai_act_docs import get_technical_doc_service
+    svc = get_technical_doc_service()
+    entry = svc.set_training_data(
+        app_id=app_id,
+        dataset_name=body.get("dataset_name", ""),
+        dataset_size=body.get("dataset_size", ""),
+        data_sources=body.get("data_sources", []),
+        preprocessing_steps=body.get("preprocessing_steps", []),
+        known_biases=body.get("known_biases", []),
+        data_governance=body.get("data_governance", ""),
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail="Technical doc entry not found")
+    return entry.to_dict()
+
+
+@router.post("/eu-ai-act/technical-docs/{app_id}/accuracy-measures")
+async def add_accuracy_measure(app_id: str, body: dict):
+    """Add an accuracy measure to an application's technical doc."""
+    from app.services.multilingual.eu_ai_act_docs import get_technical_doc_service
+    svc = get_technical_doc_service()
+    entry = svc.add_accuracy_measure(
+        app_id=app_id,
+        metric_name=body.get("metric_name", ""),
+        metric_value=body.get("metric_value", ""),
+        evaluation_dataset=body.get("evaluation_dataset", ""),
+        evaluation_date=body.get("evaluation_date", ""),
+        notes=body.get("notes", ""),
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail="Technical doc entry not found")
+    return entry.to_dict()
+
+
+@router.post("/eu-ai-act/technical-docs/{app_id}/robustness-measures")
+async def add_robustness_measure(app_id: str, body: dict):
+    """Add a robustness measure to an application's technical doc."""
+    from app.services.multilingual.eu_ai_act_docs import get_technical_doc_service
+    svc = get_technical_doc_service()
+    entry = svc.add_robustness_measure(
+        app_id=app_id,
+        measure_name=body.get("measure_name", ""),
+        description=body.get("description", ""),
+        implementation_status=body.get("implementation_status", "implemented"),
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail="Technical doc entry not found")
+    return entry.to_dict()
+
+
+@router.get("/eu-ai-act/technical-docs/{app_id}/export")
+async def export_article11_package(app_id: str):
+    """Generate and export the full Article 11 technical documentation package."""
+    from app.services.multilingual.eu_ai_act_docs import get_technical_doc_service
+    svc = get_technical_doc_service()
+    package = svc.generate_article11_package(app_id)
+    if not package:
+        raise HTTPException(status_code=404, detail="Technical doc entry not found")
+    return package
+
+
+@router.delete("/eu-ai-act/technical-docs/{app_id}")
+async def remove_technical_doc(app_id: str):
+    """Remove technical documentation entry."""
+    from app.services.multilingual.eu_ai_act_docs import get_technical_doc_service
+    svc = get_technical_doc_service()
+    if not svc.remove_entry(app_id):
+        raise HTTPException(status_code=404, detail="Technical doc entry not found")
+    return {"status": "removed", "app_id": app_id}
