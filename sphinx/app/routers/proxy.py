@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse, Response
 
 from app.services.proxy import proxy_request
+from app.services.output_scanner.engine import OutputScanContext
 from app.services.rate_limiter import check_rate_limit
 from app.services.kill_switch import check_kill_switch
 from app.services.token_budget import record_token_usage, get_budget_state, persist_usage_to_db
@@ -368,6 +369,16 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                     budget_decision.current_usage, budget_decision.budget_limit, tenant_id,
                 )
 
+    # ── Build output scan context from input pipeline results ──
+    # compliance_tags is set in the routing policy block; default to empty if not reached
+    _output_compliance_tags = compliance_tags if 'compliance_tags' in locals() else []
+    output_scan_ctx = OutputScanContext(
+        tenant_id=tenant_id,
+        request_id=str(api_key_id) if api_key_id else "",
+        input_compliance_tags=_output_compliance_tags,
+        model=model_name or "",
+    )
+
     # ── Multi-provider routing ──
     provider = resolve_provider(model_name) if model_name else None
 
@@ -385,7 +396,7 @@ async def gateway_proxy(request: Request, path: str) -> Response:
             "Proxying request path=/v1/%s tenant=%s project=%s method=%s model=%s (default provider)",
             path, tenant_id, project_id, request.method, model_name or "unknown",
         )
-        response = await proxy_request(request, target_url)
+        response = await proxy_request(request, target_url, output_scan_context=output_scan_ctx)
 
     # ── Routing decision audit log ──
     if routing_decision and routing_decision.action != RoutingAction.DEFAULT:
