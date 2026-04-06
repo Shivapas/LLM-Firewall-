@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident, CollectionAuditLogRecord, RoutingRule, BudgetTier
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident, CollectionAuditLogRecord, RoutingRule, BudgetTier, AlertRule, AlertEvent, SecurityIncident, OnboardingProgress
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -2861,3 +2861,290 @@ async def export_evidence_zip(
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=compliance_evidence.zip"},
     )
+
+
+# ── Sprint 19: Enterprise Dashboard & Alerting ──────────────────────────
+
+
+# ── Security Operations Dashboard ──
+
+
+@router.get("/dashboard/security-ops")
+async def get_security_ops_dashboard(period_hours: int = 24):
+    """Get the unified security operations dashboard."""
+    from app.services.dashboard.security_ops import get_security_ops_dashboard as get_svc
+    svc = get_svc()
+    data = await svc.get_dashboard(period_hours=period_hours)
+    return data.model_dump()
+
+
+# ── Policy Coverage Map ──
+
+
+@router.get("/dashboard/policy-coverage")
+async def get_policy_coverage():
+    """Get OWASP LLM Top 10 policy coverage map."""
+    from app.services.dashboard.policy_coverage import get_policy_coverage_service
+    svc = get_policy_coverage_service()
+    data = await svc.get_coverage_map()
+    return data.model_dump()
+
+
+# ── Incident Management ──
+
+
+class CreateIncidentBody(BaseModel):
+    incident_type: str
+    severity: str = "high"
+    title: str = ""
+    description: str = ""
+    tenant_id: str = ""
+    source_event_id: str = ""
+    metadata: dict = {}
+
+
+class UpdateIncidentBody(BaseModel):
+    status: Optional[str] = None
+    assigned_to: Optional[str] = None
+    resolution_notes: Optional[str] = None
+
+
+@router.post("/incidents")
+async def create_incident(body: CreateIncidentBody):
+    """Create a new security incident."""
+    from app.services.dashboard.incident_manager import (
+        get_incident_management_service,
+        CreateIncidentRequest,
+    )
+    svc = get_incident_management_service()
+    req = CreateIncidentRequest(
+        incident_type=body.incident_type,
+        severity=body.severity,
+        title=body.title,
+        description=body.description,
+        tenant_id=body.tenant_id,
+        source_event_id=body.source_event_id,
+        metadata=body.metadata,
+    )
+    record = await svc.create_incident(req)
+    return record.model_dump()
+
+
+@router.get("/incidents")
+async def list_incidents(
+    incident_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    limit: int = 50,
+):
+    """List security incidents with optional filters."""
+    from app.services.dashboard.incident_manager import get_incident_management_service
+    svc = get_incident_management_service()
+    records = await svc.list_incidents(
+        incident_type=incident_type,
+        severity=severity,
+        status=status,
+        tenant_id=tenant_id,
+        limit=limit,
+    )
+    return [r.model_dump() for r in records]
+
+
+@router.get("/incidents/stats")
+async def get_incident_stats():
+    """Get incident statistics."""
+    from app.services.dashboard.incident_manager import get_incident_management_service
+    svc = get_incident_management_service()
+    stats = await svc.get_stats()
+    return stats.model_dump()
+
+
+@router.get("/incidents/{incident_id}")
+async def get_incident(incident_id: str):
+    """Get a specific incident."""
+    from app.services.dashboard.incident_manager import get_incident_management_service
+    svc = get_incident_management_service()
+    record = await svc.get_incident(incident_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return record.model_dump()
+
+
+@router.patch("/incidents/{incident_id}")
+async def update_incident(incident_id: str, body: UpdateIncidentBody):
+    """Update a security incident (status, assignment, resolution)."""
+    from app.services.dashboard.incident_manager import (
+        get_incident_management_service,
+        UpdateIncidentRequest,
+    )
+    svc = get_incident_management_service()
+    req = UpdateIncidentRequest(
+        status=body.status,
+        assigned_to=body.assigned_to,
+        resolution_notes=body.resolution_notes,
+    )
+    record = await svc.update_incident(incident_id, req)
+    if not record:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return record.model_dump()
+
+
+# ── Alert Engine ──
+
+
+class CreateAlertRuleBody(BaseModel):
+    name: str
+    description: str = ""
+    condition_type: str
+    condition_config: dict = {}
+    delivery_channel: str = "webhook"
+    delivery_target: str = ""
+    cooldown_seconds: int = 300
+    tenant_id: str = "*"
+
+
+class UpdateAlertRuleBody(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    condition_type: Optional[str] = None
+    condition_config: Optional[dict] = None
+    delivery_channel: Optional[str] = None
+    delivery_target: Optional[str] = None
+    cooldown_seconds: Optional[int] = None
+    is_active: Optional[bool] = None
+    tenant_id: Optional[str] = None
+
+
+@router.post("/alerts/rules")
+async def create_alert_rule(body: CreateAlertRuleBody):
+    """Create a new alert rule."""
+    from app.services.dashboard.alert_engine import get_alert_engine_service, AlertRuleConfig
+    svc = get_alert_engine_service()
+    config = AlertRuleConfig(
+        name=body.name,
+        description=body.description,
+        condition_type=body.condition_type,
+        condition_config=body.condition_config,
+        delivery_channel=body.delivery_channel,
+        delivery_target=body.delivery_target,
+        cooldown_seconds=body.cooldown_seconds,
+        tenant_id=body.tenant_id,
+    )
+    return await svc.create_rule(config)
+
+
+@router.get("/alerts/rules")
+async def list_alert_rules(tenant_id: Optional[str] = None):
+    """List all alert rules."""
+    from app.services.dashboard.alert_engine import get_alert_engine_service
+    svc = get_alert_engine_service()
+    return await svc.list_rules(tenant_id=tenant_id)
+
+
+@router.patch("/alerts/rules/{rule_id}")
+async def update_alert_rule(rule_id: str, body: UpdateAlertRuleBody):
+    """Update an alert rule."""
+    from app.services.dashboard.alert_engine import get_alert_engine_service
+    svc = get_alert_engine_service()
+    updates = body.model_dump(exclude_none=True)
+    result = await svc.update_rule(rule_id, updates)
+    if not result:
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    return result
+
+
+@router.delete("/alerts/rules/{rule_id}")
+async def delete_alert_rule(rule_id: str):
+    """Delete an alert rule."""
+    from app.services.dashboard.alert_engine import get_alert_engine_service
+    svc = get_alert_engine_service()
+    success = await svc.delete_rule(rule_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    return {"status": "deleted", "rule_id": rule_id}
+
+
+@router.post("/alerts/evaluate")
+async def evaluate_alerts():
+    """Manually trigger evaluation of all active alert rules."""
+    from app.services.dashboard.alert_engine import get_alert_engine_service
+    svc = get_alert_engine_service()
+    fired = await svc.evaluate_all_rules()
+    return {"fired_count": len(fired), "events": [e.model_dump() for e in fired]}
+
+
+@router.get("/alerts/events")
+async def list_alert_events(limit: int = 50, tenant_id: Optional[str] = None):
+    """List recent alert events."""
+    from app.services.dashboard.alert_engine import get_alert_engine_service
+    svc = get_alert_engine_service()
+    events = await svc.list_events(limit=limit, tenant_id=tenant_id)
+    return [e.model_dump() for e in events]
+
+
+# ── Tenant Usage Dashboard ──
+
+
+@router.get("/dashboard/tenant-usage/{tenant_id}")
+async def get_tenant_usage(tenant_id: str, period_hours: int = 24):
+    """Get per-tenant usage dashboard."""
+    from app.services.dashboard.tenant_usage import get_tenant_usage_dashboard
+    svc = get_tenant_usage_dashboard()
+    data = await svc.get_tenant_usage(tenant_id, period_hours=period_hours)
+    return data.model_dump()
+
+
+@router.get("/dashboard/tenants-summary")
+async def list_tenants_summary(period_hours: int = 24, limit: int = 50):
+    """List usage summaries for all tenants."""
+    from app.services.dashboard.tenant_usage import get_tenant_usage_dashboard
+    svc = get_tenant_usage_dashboard()
+    results = await svc.list_tenants_summary(period_hours=period_hours, limit=limit)
+    return [r.model_dump() for r in results]
+
+
+# ── Onboarding Wizard ──
+
+
+@router.get("/onboarding/{tenant_id}")
+async def get_onboarding_status(tenant_id: str):
+    """Get onboarding wizard status for a tenant."""
+    from app.services.dashboard.onboarding_wizard import get_onboarding_wizard_service
+    svc = get_onboarding_wizard_service()
+    status = await svc.get_status(tenant_id)
+    return status.model_dump()
+
+
+class CompleteStepBody(BaseModel):
+    step_key: str
+
+
+@router.post("/onboarding/{tenant_id}/complete-step")
+async def complete_onboarding_step(tenant_id: str, body: CompleteStepBody):
+    """Mark an onboarding step as complete."""
+    from app.services.dashboard.onboarding_wizard import get_onboarding_wizard_service
+    svc = get_onboarding_wizard_service()
+    try:
+        status = await svc.complete_step(tenant_id, body.step_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return status.model_dump()
+
+
+@router.post("/onboarding/{tenant_id}/auto-detect")
+async def auto_detect_onboarding(tenant_id: str):
+    """Auto-detect onboarding progress by checking system state."""
+    from app.services.dashboard.onboarding_wizard import get_onboarding_wizard_service
+    svc = get_onboarding_wizard_service()
+    status = await svc.auto_detect_progress(tenant_id)
+    return status.model_dump()
+
+
+@router.post("/onboarding/{tenant_id}/reset")
+async def reset_onboarding(tenant_id: str):
+    """Reset onboarding progress for a tenant."""
+    from app.services.dashboard.onboarding_wizard import get_onboarding_wizard_service
+    svc = get_onboarding_wizard_service()
+    status = await svc.reset_progress(tenant_id)
+    return status.model_dump()

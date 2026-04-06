@@ -43,6 +43,10 @@ export default function Layout() {
                     <Link to="/multi-model" style={styles.navLink(location.pathname === '/multi-model')}>Multi-Model</Link>
                     <Link to="/mcp-scanner" style={styles.navLink(location.pathname === '/mcp-scanner')}>MCP Scanner</Link>
                     <Link to="/agent-scope" style={styles.navLink(location.pathname === '/agent-scope')}>Agent Scope</Link>
+                    <Link to="/security-dashboard" style={styles.navLink(location.pathname === '/security-dashboard')}>Security Ops</Link>
+                    <Link to="/incidents" style={styles.navLink(location.pathname === '/incidents')}>Incidents</Link>
+                    <Link to="/alerts" style={styles.navLink(location.pathname === '/alerts')}>Alerts</Link>
+                    <Link to="/onboarding" style={styles.navLink(location.pathname === '/onboarding')}>Onboarding</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>

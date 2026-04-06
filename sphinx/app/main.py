@@ -28,6 +28,12 @@ from app.services.mcp.dashboard import get_guardrail_dashboard_service
 from app.services.audit_hash_chain import get_hash_chain_service
 from app.services.audit_query import get_audit_query_service
 from app.services.compliance_reports import get_compliance_report_service
+from app.services.dashboard.security_ops import get_security_ops_dashboard
+from app.services.dashboard.policy_coverage import get_policy_coverage_service
+from app.services.dashboard.incident_manager import get_incident_management_service
+from app.services.dashboard.alert_engine import get_alert_engine_service
+from app.services.dashboard.tenant_usage import get_tenant_usage_dashboard
+from app.services.dashboard.onboarding_wizard import get_onboarding_wizard_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -166,13 +172,40 @@ async def lifespan(app: FastAPI):
         compliance_reports = get_compliance_report_service(session_factory=async_session)
         logger.info("Compliance report service initialized")
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready")
+        # Sprint 19: Enterprise Dashboard & Alerting
+        sec_ops_dashboard = get_security_ops_dashboard(session_factory=async_session)
+        logger.info("Security operations dashboard initialized")
+
+        policy_coverage = get_policy_coverage_service(session_factory=async_session)
+        logger.info("Policy coverage map service initialized")
+
+        incident_mgr = get_incident_management_service(session_factory=async_session)
+        logger.info("Incident management service initialized")
+
+        alert_engine = get_alert_engine_service(session_factory=async_session)
+        await alert_engine.start(interval_seconds=30)
+        logger.info("Real-time alert engine started")
+
+        tenant_dashboard = get_tenant_usage_dashboard(session_factory=async_session)
+        logger.info("Tenant usage dashboard initialized")
+
+        onboarding = get_onboarding_wizard_service(session_factory=async_session)
+        logger.info("Onboarding wizard service initialized")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
     yield
 
     # Shutdown
+    # Stop Sprint 19 alert engine
+    try:
+        alert_engine = get_alert_engine_service()
+        await alert_engine.stop()
+    except Exception:
+        logger.warning("Error shutting down alert engine", exc_info=True)
+
     await stop_kill_switch_subscriber()
     stop_background_refresh()
 

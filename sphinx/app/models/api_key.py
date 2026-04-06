@@ -711,3 +711,123 @@ class AgentRiskScoreRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# ── Sprint 19: Enterprise Dashboard & Alerting ───────────────────────────
+
+
+class AlertRule(Base):
+    """Configurable alert rule for the real-time alert engine.
+
+    Supports conditions: block_rate_spike, budget_exhaustion,
+    new_critical_mcp_tool, kill_switch_activation, anomaly_score_breach.
+    Delivery: email, webhook.
+    """
+    __tablename__ = "alert_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    condition_type: Mapped[str] = mapped_column(
+        String(64), index=True
+    )  # block_rate_spike, budget_exhaustion, new_critical_mcp_tool, kill_switch_activation, anomaly_score_breach
+    condition_config_json: Mapped[str] = mapped_column(Text, default="{}")
+    # Delivery
+    delivery_channel: Mapped[str] = mapped_column(
+        String(32), default="webhook"
+    )  # email, webhook
+    delivery_target: Mapped[str] = mapped_column(String(512), default="")  # email address or webhook URL
+    # Cooldown to prevent alert storms
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    last_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Scope
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="*")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AlertEvent(Base):
+    """Fired alert event record."""
+    __tablename__ = "alert_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    alert_rule_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    alert_rule_name: Mapped[str] = mapped_column(String(256), default="")
+    condition_type: Mapped[str] = mapped_column(String(64), default="")
+    severity: Mapped[str] = mapped_column(String(16), default="high")  # critical, high, medium, low
+    message: Mapped[str] = mapped_column(Text, default="")
+    delivery_channel: Mapped[str] = mapped_column(String(32), default="")
+    delivery_target: Mapped[str] = mapped_column(String(512), default="")
+    delivery_status: Mapped[str] = mapped_column(
+        String(16), default="pending"
+    )  # pending, sent, failed
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SecurityIncident(Base):
+    """Incident record for critical security events.
+
+    Types: critical_threat, namespace_breach, kill_switch_activation, tier2_finding.
+    """
+    __tablename__ = "security_incidents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    incident_type: Mapped[str] = mapped_column(
+        String(64), index=True
+    )  # critical_threat, namespace_breach, kill_switch_activation, tier2_finding
+    severity: Mapped[str] = mapped_column(String(16), default="high")  # critical, high, medium, low
+    title: Mapped[str] = mapped_column(String(512), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    source_event_id: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(
+        String(32), default="open", index=True
+    )  # open, investigating, resolved, dismissed
+    assigned_to: Mapped[str] = mapped_column(String(128), default="")
+    resolution_notes: Mapped[str] = mapped_column(Text, default="")
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class OnboardingProgress(Base):
+    """Tracks onboarding wizard progress per tenant."""
+    __tablename__ = "onboarding_progress"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Step completion flags
+    step_register_model: Mapped[bool] = mapped_column(Boolean, default=False)
+    step_issue_api_key: Mapped[bool] = mapped_column(Boolean, default=False)
+    step_send_test_request: Mapped[bool] = mapped_column(Boolean, default=False)
+    step_verify_audit_log: Mapped[bool] = mapped_column(Boolean, default=False)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
