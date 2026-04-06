@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident
+from app.models.api_key import APIKey, KillSwitch, PolicyRule, SecurityRule, RAGPolicyConfig, PolicyVersionSnapshot, VectorCollectionPolicy, Incident, CollectionAuditLogRecord
 from app.services.database import get_db
 from app.services.key_service import create_api_key, revoke_api_key, hash_key
 from app.services.kill_switch import (
@@ -1463,4 +1463,157 @@ async def chunk_scan_status():
     return {
         "scanner_active": True,
         "pending_incidents": len(pending),
+    }
+
+
+# ── Sprint 10: Collection Audit Log Endpoints ──────────────────────────
+
+
+@router.get("/collection-audit")
+async def list_collection_audit_entries(
+    collection_name: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List collection-level audit log entries."""
+    from app.services.vectordb.collection_audit import get_collection_audit_log
+
+    audit_log = get_collection_audit_log()
+    entries = audit_log.get_entries(
+        collection_name=collection_name,
+        tenant_id=tenant_id,
+        limit=min(limit, 200),
+        offset=offset,
+    )
+    return [e.to_dict() for e in entries]
+
+
+@router.get("/collection-audit/stats")
+async def collection_audit_stats(collection_name: Optional[str] = None):
+    """Get aggregated collection audit statistics."""
+    from app.services.vectordb.collection_audit import get_collection_audit_log
+
+    audit_log = get_collection_audit_log()
+    stats = audit_log.get_collection_stats(collection_name)
+    return {
+        "total_buffered": audit_log.buffer_size,
+        "total_entries": audit_log.total_entries,
+        "collections": stats,
+    }
+
+
+@router.get("/collection-audit/tenant-stats/{collection_name}")
+async def collection_tenant_stats(collection_name: str):
+    """Get per-tenant query volume for a collection."""
+    from app.services.vectordb.collection_audit import get_collection_audit_log
+
+    audit_log = get_collection_audit_log()
+    return audit_log.get_tenant_stats(collection_name)
+
+
+@router.get("/collection-audit/anomaly-timeline")
+async def collection_anomaly_timeline(
+    collection_name: Optional[str] = None,
+    limit: int = 100,
+):
+    """Get timeline of anomaly events across collections."""
+    from app.services.vectordb.collection_audit import get_collection_audit_log
+
+    audit_log = get_collection_audit_log()
+    return audit_log.get_anomaly_timeline(collection_name, limit=min(limit, 500))
+
+
+# ── Sprint 10: Vector DB Dashboard Endpoint ────────────────────────────
+
+
+@router.get("/vectordb-dashboard")
+async def vectordb_dashboard(db: AsyncSession = Depends(get_db)):
+    """Dashboard data: collection policy health, query volume, blocked counts, anomaly timeline."""
+    from app.services.vectordb.collection_audit import get_collection_audit_log
+    from app.services.vectordb.proxy import get_vectordb_proxy
+
+    proxy = get_vectordb_proxy()
+    audit_log = get_collection_audit_log()
+
+    # Proxy stats
+    proxy_stats = proxy.get_stats()
+    policies = proxy.list_policies()
+
+    # Collection policy health
+    collection_health = []
+    for p in policies:
+        provider_val = p.provider.value if isinstance(p.provider, VectorDBProvider) else str(p.provider)
+        action_val = p.default_action.value if isinstance(p.default_action, ProxyAction) else str(p.default_action)
+        cstats = audit_log.get_collection_stats(p.collection_name)
+        cs = cstats.get(p.collection_name, {})
+        collection_health.append({
+            "collection_name": p.collection_name,
+            "provider": provider_val,
+            "default_action": action_val,
+            "is_active": p.is_active,
+            "total_queries": cs.get("total_queries", 0),
+            "total_blocked": cs.get("total_blocked", 0),
+            "total_chunks_returned": cs.get("total_chunks_returned", 0),
+            "total_chunks_blocked": cs.get("total_chunks_blocked", 0),
+            "total_anomalies": cs.get("total_anomalies", 0),
+            "total_injection_blocks": cs.get("total_injection_blocks", 0),
+            "avg_latency_ms": round(cs.get("avg_latency_ms", 0.0), 2),
+            "unique_tenants": cs.get("unique_tenants", 0),
+        })
+
+    # Anomaly timeline (last 50)
+    anomaly_timeline = audit_log.get_anomaly_timeline(limit=50)
+
+    # Overall summary
+    all_stats = audit_log.get_collection_stats()
+    total_queries = sum(s.get("total_queries", 0) for s in all_stats.values())
+    total_blocked = sum(s.get("total_blocked", 0) for s in all_stats.values())
+    total_anomalies = sum(s.get("total_anomalies", 0) for s in all_stats.values())
+
+    return {
+        "proxy_stats": proxy_stats,
+        "registered_collections": len(policies),
+        "collection_health": collection_health,
+        "anomaly_timeline": anomaly_timeline,
+        "summary": {
+            "total_queries": total_queries,
+            "total_blocked": total_blocked,
+            "total_anomalies": total_anomalies,
+            "audit_buffer_size": audit_log.buffer_size,
+        },
+    }
+
+
+# ── Sprint 10: Milvus Proxy Status Endpoint ───────────────────────────
+
+
+@router.get("/milvus-proxy/status")
+async def milvus_proxy_status():
+    """Get Milvus gRPC proxy status and health."""
+    from app.services.vectordb.milvus_proxy import get_milvus_proxy
+
+    proxy = get_milvus_proxy()
+    return {
+        "stats": proxy.stats,
+        "health": proxy.health_check(),
+    }
+
+
+# ── Sprint 10: Compliance Tagging Status ───────────────────────────────
+
+
+@router.get("/compliance-tagger/status")
+async def compliance_tagger_status():
+    """Get compliance tagger configuration status."""
+    from app.services.vectordb.compliance_tagger import get_compliance_tagger
+
+    tagger = get_compliance_tagger()
+    return {
+        "active": True,
+        "scan_content": tagger._policy.scan_content,
+        "scan_metadata": tagger._policy.scan_metadata,
+        "pii_patterns": len(tagger._policy.pii_content_patterns),
+        "phi_patterns": len(tagger._policy.phi_content_patterns),
+        "ip_patterns": len(tagger._policy.ip_content_patterns),
     }

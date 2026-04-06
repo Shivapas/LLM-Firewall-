@@ -236,6 +236,10 @@ class VectorCollectionPolicy(Base):
     max_tokens_per_chunk: Mapped[int] = mapped_column(Integer, default=512)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="*")  # * = global
+    # Sprint 10 fields
+    use_partition_isolation: Mapped[bool] = mapped_column(Boolean, default=False)
+    partition_prefix: Mapped[str] = mapped_column(String(64), default="tenant_")
+    compliance_tagging_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -263,6 +267,41 @@ class Incident(Base):
     score: Mapped[float] = mapped_column(Float, default=0.0)
     action_taken: Mapped[str] = mapped_column(String(32), default="blocked")  # blocked, alerted
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CollectionAuditLogRecord(Base):
+    """Per-collection audit log for every governed vector DB query (Sprint 10)."""
+    __tablename__ = "collection_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    audit_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    timestamp: Mapped[float] = mapped_column(Float, default=0.0)
+    collection_name: Mapped[str] = mapped_column(String(256), index=True, default="")
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    operation: Mapped[str] = mapped_column(String(32), default="")
+    query_hash: Mapped[str] = mapped_column(String(64), index=True, default="")
+    namespace_field: Mapped[str] = mapped_column(String(128), default="")
+    namespace_value: Mapped[str] = mapped_column(String(128), default="")
+    namespace_injected: Mapped[bool] = mapped_column(Boolean, default=False)
+    chunks_returned: Mapped[int] = mapped_column(Integer, default=0)
+    chunks_blocked: Mapped[int] = mapped_column(Integer, default=0)
+    results_capped: Mapped[bool] = mapped_column(Boolean, default=False)
+    original_top_k: Mapped[int] = mapped_column(Integer, default=0)
+    enforced_top_k: Mapped[int] = mapped_column(Integer, default=0)
+    injection_blocks: Mapped[int] = mapped_column(Integer, default=0)
+    sensitive_field_blocks: Mapped[int] = mapped_column(Integer, default=0)
+    anomaly_score: Mapped[float] = mapped_column(Float, default=0.0)
+    anomaly_detected: Mapped[bool] = mapped_column(Boolean, default=False)
+    compliance_tags_json: Mapped[str] = mapped_column(Text, default="{}")
+    requires_private_model: Mapped[bool] = mapped_column(Boolean, default=False)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    provider: Mapped[str] = mapped_column(String(64), default="")
+    action: Mapped[str] = mapped_column(String(32), default="allowed")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

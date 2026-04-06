@@ -91,6 +91,9 @@ class ProxyResult:
     anomaly_distance: float = 0.0
     context_minimized: bool = False
     incidents: list[dict[str, Any]] = field(default_factory=list)
+    # Sprint 10: Compliance tagging
+    compliance_tags: dict[str, int] = field(default_factory=dict)
+    requires_private_model: bool = False
 
     def to_dict(self) -> dict:
         d = {
@@ -119,6 +122,9 @@ class ProxyResult:
             d["anomaly_distance"] = round(self.anomaly_distance, 6)
         if self.incidents:
             d["incident_count"] = len(self.incidents)
+        if self.compliance_tags:
+            d["compliance_tags"] = self.compliance_tags
+            d["requires_private_model"] = self.requires_private_model
         return d
 
 
@@ -272,6 +278,12 @@ class VectorDBProxy:
             if scan_result.incidents:
                 self._log_incidents(scan_result, policy, request.tenant_id)
 
+        # Step 7 (Sprint 10): Compliance tagging on retrieved chunks
+        if request.operation == VectorOperation.QUERY and result.documents:
+            compliance_result = self._tag_compliance(result.documents)
+            result.compliance_tags = compliance_result.summary
+            result.requires_private_model = compliance_result.any_requires_private_model
+
         if policy.default_action == ProxyAction.MONITOR:
             self._stats["monitored"] += 1
         else:
@@ -279,6 +291,10 @@ class VectorDBProxy:
 
         result.allowed = True
         result.latency_ms = (time.perf_counter() - start) * 1000
+
+        # Step 8 (Sprint 10): Collection-level audit log
+        self._record_audit(request, result, policy)
+
         return result
 
     def _scan_chunks(
@@ -349,6 +365,61 @@ class VectorDBProxy:
                 distance=scan_result.anomaly_distance,
                 threshold=policy.anomaly_distance_threshold,
             )
+
+    def _tag_compliance(
+        self,
+        documents: list[dict[str, Any]],
+    ) -> "BatchComplianceResult":
+        """Tag documents with compliance labels (Sprint 10)."""
+        from app.services.vectordb.compliance_tagger import get_compliance_tagger
+
+        tagger = get_compliance_tagger()
+        return tagger.tag_chunks(documents)
+
+    def _record_audit(
+        self,
+        request: "ProxyRequest",
+        result: "ProxyResult",
+        policy: "CollectionPolicy",
+    ) -> None:
+        """Record a collection-level audit entry (Sprint 10)."""
+        from app.services.vectordb.collection_audit import (
+            CollectionAuditEntry,
+            compute_query_hash,
+            get_collection_audit_log,
+        )
+
+        audit_log = get_collection_audit_log()
+        entry = CollectionAuditEntry(
+            collection_name=request.collection_name,
+            tenant_id=request.tenant_id,
+            operation=request.operation.value,
+            query_hash=compute_query_hash(
+                request.collection_name,
+                request.tenant_id,
+                request.operation.value,
+                request.filters,
+                request.query_text,
+            ),
+            namespace_field=policy.namespace_field,
+            namespace_value=request.tenant_id,
+            namespace_injected=result.namespace_injected,
+            chunks_returned=len(result.documents),
+            chunks_blocked=result.chunks_blocked,
+            results_capped=result.results_capped,
+            original_top_k=result.original_top_k,
+            enforced_top_k=result.enforced_top_k,
+            injection_blocks=result.injection_blocks,
+            sensitive_field_blocks=result.sensitive_field_blocks,
+            anomaly_score=result.anomaly_distance,
+            anomaly_detected=result.anomaly_detected,
+            compliance_tags=result.compliance_tags,
+            requires_private_model=result.requires_private_model,
+            latency_ms=result.latency_ms,
+            provider=policy.provider.value if isinstance(policy.provider, VectorDBProvider) else str(policy.provider),
+            action=result.action.value if isinstance(result.action, ProxyAction) else str(result.action),
+        )
+        audit_log.record(entry)
 
     def _inject_namespace(self, request: ProxyRequest, policy: CollectionPolicy) -> ProxyRequest:
         """Inject mandatory tenant namespace filter into the query.
