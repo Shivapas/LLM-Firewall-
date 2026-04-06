@@ -14,6 +14,10 @@ import KillSwitchPage from './pages/KillSwitchPage';
 import MultiModelDashboardPage from './pages/MultiModelDashboardPage';
 import MCPScannerPage from './pages/MCPScannerPage';
 import AgentScopePage from './pages/AgentScopePage';
+import SecurityDashboardPage from './pages/SecurityDashboardPage';
+import IncidentManagementPage from './pages/IncidentManagementPage';
+import AlertManagementPage from './pages/AlertManagementPage';
+import OnboardingPage from './pages/OnboardingPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -50,6 +54,10 @@ export default function App() {
                         <Route path="multi-model" element={<MultiModelDashboardPage />} />
                         <Route path="mcp-scanner" element={<MCPScannerPage />} />
                         <Route path="agent-scope" element={<AgentScopePage />} />
+                        <Route path="security-dashboard" element={<SecurityDashboardPage />} />
+                        <Route path="incidents" element={<IncidentManagementPage />} />
+                        <Route path="alerts" element={<AlertManagementPage />} />
+                        <Route path="onboarding" element={<OnboardingPage />} />
                     </Route>
                 </Routes>
             </BrowserRouter>
