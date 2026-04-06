@@ -638,3 +638,64 @@ class MCPRiskAlert(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# ── Sprint 17: MCP Guardrails Dashboard & Compliance Tagging ────────────
+
+
+class MCPToolCallAudit(Base):
+    """Audit record for every MCP tool call.
+
+    Per-call audit: agent ID, tool name, MCP server, input hash,
+    output hash, action taken, compliance tags, timestamp.
+    """
+    __tablename__ = "mcp_tool_call_audits"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(256), index=True)
+    tool_name: Mapped[str] = mapped_column(String(256), index=True)
+    mcp_server: Mapped[str] = mapped_column(String(256), index=True)
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
+    output_hash: Mapped[str] = mapped_column(String(64), default="")
+    action: Mapped[str] = mapped_column(
+        String(32), default="allowed"
+    )  # allowed, blocked, filtered, redacted
+    compliance_tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    request_size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    response_size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AgentRiskScoreRecord(Base):
+    """Persisted agent risk score snapshot.
+
+    Aggregate risk score per agent based on: connected tool risk scores,
+    violation history, scope breadth.
+    """
+    __tablename__ = "agent_risk_scores"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(256), index=True)
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    risk_level: Mapped[str] = mapped_column(String(16), default="low")
+    tool_risk_component: Mapped[float] = mapped_column(Float, default=0.0)
+    violation_component: Mapped[float] = mapped_column(Float, default=0.0)
+    scope_breadth_component: Mapped[float] = mapped_column(Float, default=0.0)
+    connected_tools_count: Mapped[int] = mapped_column(Integer, default=0)
+    violation_count_24h: Mapped[int] = mapped_column(Integer, default=0)
+    total_violations: Mapped[int] = mapped_column(Integer, default=0)
+    contributing_factors: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
