@@ -15,6 +15,9 @@ from app.services.credential_store import list_providers, get_provider_credentia
 from app.services.audit import get_audit_writer, get_audit_consumer
 from app.services.threat_detection.engine import get_threat_engine, reset_threat_engine
 from app.services.threat_detection.tier2_scanner import get_tier2_scanner
+from app.services.health_probe import get_health_probe
+from app.services.circuit_breaker import sync_circuit_breakers_from_db
+from app.services.failover_policy import get_failover_engine
 
 logger = logging.getLogger("sphinx.main")
 
@@ -99,7 +102,17 @@ async def lifespan(app: FastAPI):
         # Start kill-switch pub/sub subscriber for sub-5s propagation
         await start_kill_switch_subscriber()
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready")
+        # Sprint 13: Initialize provider health monitoring & failover
+        async with async_session() as db:
+            await sync_circuit_breakers_from_db(db)
+
+        health_probe = get_health_probe(async_session)
+        await health_probe.start()
+
+        failover_engine = get_failover_engine(async_session)
+        await failover_engine.start()
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
@@ -108,6 +121,15 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await stop_kill_switch_subscriber()
     stop_background_refresh()
+
+    # Stop Sprint 13 services
+    try:
+        health_probe = get_health_probe()
+        await health_probe.stop()
+        failover_engine = get_failover_engine()
+        await failover_engine.stop()
+    except Exception:
+        logger.warning("Error shutting down health probe / failover engine", exc_info=True)
 
     # Close audit system
     try:
@@ -125,7 +147,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sphinx AI Mesh Firewall",
     description="Gateway proxy for LLM provider traffic with multi-provider routing and audit",
-    version="0.7.0",
+    version="0.8.0",
     lifespan=lifespan,
 )
 
