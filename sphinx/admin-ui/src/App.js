@@ -18,6 +18,7 @@ import SecurityDashboardPage from './pages/SecurityDashboardPage';
 import IncidentManagementPage from './pages/IncidentManagementPage';
 import AlertManagementPage from './pages/AlertManagementPage';
 import OnboardingPage from './pages/OnboardingPage';
+import RedTeamPage from './pages/RedTeamPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -58,6 +59,7 @@ export default function App() {
                         <Route path="incidents" element={<IncidentManagementPage />} />
                         <Route path="alerts" element={<AlertManagementPage />} />
                         <Route path="onboarding" element={<OnboardingPage />} />
+                        <Route path="red-team" element={<RedTeamPage />} />
                     </Route>
                 </Routes>
             </BrowserRouter>

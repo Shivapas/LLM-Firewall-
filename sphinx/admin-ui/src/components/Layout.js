@@ -47,6 +47,7 @@ export default function Layout() {
                     <Link to="/incidents" style={styles.navLink(location.pathname === '/incidents')}>Incidents</Link>
                     <Link to="/alerts" style={styles.navLink(location.pathname === '/alerts')}>Alerts</Link>
                     <Link to="/onboarding" style={styles.navLink(location.pathname === '/onboarding')}>Onboarding</Link>
+                    <Link to="/red-team" style={styles.navLink(location.pathname === '/red-team')}>Red Team</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>

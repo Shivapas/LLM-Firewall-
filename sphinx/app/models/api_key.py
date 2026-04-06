@@ -831,3 +831,56 @@ class OnboardingProgress(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class RedTeamCampaign(Base):
+    """A red team attack simulation campaign."""
+    __tablename__ = "red_team_campaigns"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    target_url: Mapped[str] = mapped_column(String(1024))
+    probe_categories_json: Mapped[str] = mapped_column(
+        Text, default='["injection","jailbreak","pii_extraction"]'
+    )
+    concurrency: Mapped[int] = mapped_column(Integer, default=10)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    total_probes: Mapped[int] = mapped_column(Integer, default=0)
+    probes_executed: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(128), default="admin")
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RedTeamProbeResult(Base):
+    """Result of a single probe execution within a campaign."""
+    __tablename__ = "red_team_probe_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    probe_id: Mapped[str] = mapped_column(String(32), index=True)
+    probe_name: Mapped[str] = mapped_column(String(256), default="")
+    category: Mapped[str] = mapped_column(String(64), default="", index=True)
+    technique: Mapped[str] = mapped_column(String(128), default="")
+    severity: Mapped[str] = mapped_column(String(16), default="medium", index=True)
+    detected: Mapped[bool] = mapped_column(Boolean, default=False)
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    response_snippet: Mapped[str] = mapped_column(Text, default="")
+    bypass_technique: Mapped[str] = mapped_column(String(256), default="")
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
