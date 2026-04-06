@@ -1934,3 +1934,248 @@ async def _reload_budget_tiers(db: AsyncSession) -> None:
         }
         for t in tiers
     ])
+
+
+# ── Sprint 13: Provider Health Monitoring & Failover ─────────────────────
+
+
+# -- Provider Health Probe endpoints --
+
+@router.get("/provider-health")
+async def get_provider_health(
+    provider_name: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get latest health status for providers."""
+    from app.services.health_probe import get_provider_health_status
+    statuses = await get_provider_health_status(db, provider_name)
+    return {"provider_health": statuses}
+
+
+@router.post("/provider-health/probe")
+async def trigger_health_probe(db: AsyncSession = Depends(get_db)):
+    """Manually trigger a health probe cycle."""
+    from app.services.health_probe import get_health_probe
+    probe = get_health_probe()
+    results = await probe.run_probe_cycle()
+    return {"results": results}
+
+
+# -- Circuit Breaker endpoints --
+
+class CircuitBreakerForceRequest(BaseModel):
+    provider_name: str
+    state: str  # closed, open, half_open
+
+
+@router.get("/circuit-breakers")
+async def list_circuit_breakers(db: AsyncSession = Depends(get_db)):
+    """Get all circuit breaker states."""
+    from app.services.circuit_breaker import get_all_circuit_breaker_states
+    states = await get_all_circuit_breaker_states(db)
+    return {"circuit_breakers": states}
+
+
+@router.get("/circuit-breakers/{provider_name}")
+async def get_circuit_breaker_state(provider_name: str, db: AsyncSession = Depends(get_db)):
+    """Get circuit breaker state for a specific provider."""
+    from app.services.circuit_breaker import get_circuit_breaker
+    cb = get_circuit_breaker(provider_name)
+    state = await cb.get_state(db)
+    return state
+
+
+@router.post("/circuit-breakers/force")
+async def force_circuit_breaker(body: CircuitBreakerForceRequest, db: AsyncSession = Depends(get_db)):
+    """Manually force a circuit breaker state (admin override)."""
+    if body.state not in ("closed", "open", "half_open"):
+        raise HTTPException(status_code=400, detail="state must be closed, open, or half_open")
+    from app.services.circuit_breaker import get_circuit_breaker
+    cb = get_circuit_breaker(body.provider_name)
+    state = await cb.force_state(db, body.state)
+    return state
+
+
+# -- Failover Policy endpoints --
+
+class FailoverPolicyRequest(BaseModel):
+    provider_name: str
+    error_rate_threshold: float = 0.5
+    latency_threshold_ms: float = 5000.0
+    evaluation_window_seconds: int = 60
+    fallback_provider: str = ""
+    auto_failover: bool = True
+    require_confirmation: bool = False
+    is_active: bool = True
+
+
+class FailoverPolicyUpdateRequest(BaseModel):
+    error_rate_threshold: Optional[float] = None
+    latency_threshold_ms: Optional[float] = None
+    evaluation_window_seconds: Optional[int] = None
+    fallback_provider: Optional[str] = None
+    auto_failover: Optional[bool] = None
+    require_confirmation: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/failover-policies")
+async def list_failover_policies_endpoint(db: AsyncSession = Depends(get_db)):
+    """List all failover policies."""
+    from app.services.failover_policy import list_failover_policies
+    policies = await list_failover_policies(db)
+    return {"failover_policies": policies}
+
+
+@router.get("/failover-policies/{provider_name}")
+async def get_failover_policy_endpoint(provider_name: str, db: AsyncSession = Depends(get_db)):
+    """Get failover policy for a specific provider."""
+    from app.services.failover_policy import get_failover_policy
+    policy = await get_failover_policy(db, provider_name)
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Failover policy not found")
+    return policy
+
+
+@router.post("/failover-policies", status_code=201)
+async def create_failover_policy_endpoint(body: FailoverPolicyRequest, db: AsyncSession = Depends(get_db)):
+    """Create a new failover policy."""
+    from app.services.failover_policy import create_failover_policy
+    policy = await create_failover_policy(
+        db,
+        provider_name=body.provider_name,
+        error_rate_threshold=body.error_rate_threshold,
+        latency_threshold_ms=body.latency_threshold_ms,
+        evaluation_window_seconds=body.evaluation_window_seconds,
+        fallback_provider=body.fallback_provider,
+        auto_failover=body.auto_failover,
+        require_confirmation=body.require_confirmation,
+        is_active=body.is_active,
+    )
+    return policy
+
+
+@router.put("/failover-policies/{provider_name}")
+async def update_failover_policy_endpoint(
+    provider_name: str, body: FailoverPolicyUpdateRequest, db: AsyncSession = Depends(get_db)
+):
+    """Update a failover policy."""
+    from app.services.failover_policy import update_failover_policy
+    policy = await update_failover_policy(db, provider_name, **body.model_dump(exclude_none=True))
+    if policy is None:
+        raise HTTPException(status_code=404, detail="Failover policy not found")
+    return policy
+
+
+@router.delete("/failover-policies/{provider_name}")
+async def delete_failover_policy_endpoint(provider_name: str, db: AsyncSession = Depends(get_db)):
+    """Delete a failover policy."""
+    from app.services.failover_policy import delete_failover_policy
+    ok = await delete_failover_policy(db, provider_name)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Failover policy not found")
+    return {"status": "deleted", "provider_name": provider_name}
+
+
+@router.post("/failover-policies/evaluate")
+async def evaluate_failover_policies(db: AsyncSession = Depends(get_db)):
+    """Manually trigger failover policy evaluation."""
+    from app.services.failover_policy import get_failover_engine
+    engine = get_failover_engine()
+    actions = await engine.evaluate_all()
+    return {"actions": actions}
+
+
+@router.post("/failover-policies/confirm/{confirmation_id}")
+async def confirm_failover(confirmation_id: str, db: AsyncSession = Depends(get_db)):
+    """Confirm a pending failover action."""
+    from app.services.failover_policy import get_failover_engine
+    engine = get_failover_engine()
+    result = await engine.confirm_failover(db, confirmation_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Confirmation not found or expired")
+    return result
+
+
+# -- Cost Tracking endpoints --
+
+@router.get("/provider-costs")
+async def get_provider_costs(
+    provider_name: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    hours: int = 24,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get cost summary per provider per tenant."""
+    from app.services.cost_tracker import get_cost_summary
+    summary = await get_cost_summary(db, provider_name, tenant_id, hours)
+    return {"cost_summary": summary}
+
+
+@router.get("/provider-costs/totals")
+async def get_provider_cost_totals_endpoint(
+    hours: int = 24,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get cost totals per provider (no tenant breakdown)."""
+    from app.services.cost_tracker import get_provider_cost_totals
+    totals = await get_provider_cost_totals(db, hours)
+    return {"cost_totals": totals}
+
+
+@router.get("/provider-costs/realtime/{provider_name}/{tenant_id}")
+async def get_realtime_cost_endpoint(provider_name: str, tenant_id: str):
+    """Get real-time cost from Redis counters."""
+    from app.services.cost_tracker import get_realtime_cost
+    data = await get_realtime_cost(provider_name, tenant_id)
+    if data is None:
+        return {"message": "No real-time data available"}
+    return data
+
+
+# -- Multi-Model Dashboard endpoint --
+
+@router.get("/multi-model-dashboard")
+async def multi_model_dashboard(db: AsyncSession = Depends(get_db)):
+    """Aggregated dashboard: model registry, health, costs, kill-switches, routing."""
+    from app.services.health_probe import get_provider_health_status
+    from app.services.circuit_breaker import get_all_circuit_breaker_states
+    from app.services.cost_tracker import get_provider_cost_totals
+    from app.services.providers.registry import MODEL_PROVIDER_MAP
+
+    health = await get_provider_health_status(db)
+    cb_states = await get_all_circuit_breaker_states(db)
+    costs = await get_provider_cost_totals(db, hours=24)
+    kill_switches = await list_kill_switches(db)
+
+    # Build model registry
+    model_registry = {}
+    for model, provider in MODEL_PROVIDER_MAP.items():
+        if provider not in model_registry:
+            model_registry[provider] = []
+        model_registry[provider].append(model)
+
+    # Get routing rules summary
+    result = await db.execute(
+        select(RoutingRule).where(RoutingRule.is_active == True).order_by(RoutingRule.priority)
+    )
+    routing_rules = result.scalars().all()
+    routing_summary = [
+        {
+            "name": r.name,
+            "priority": r.priority,
+            "condition_type": r.condition_type,
+            "target_model": r.target_model,
+            "action": r.action,
+        }
+        for r in routing_rules
+    ]
+
+    return {
+        "model_registry": model_registry,
+        "provider_health": health,
+        "circuit_breakers": cb_states,
+        "cost_totals_24h": costs,
+        "active_kill_switches": [ks for ks in kill_switches if ks.get("is_active")],
+        "routing_rules": routing_summary,
+    }

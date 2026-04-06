@@ -408,3 +408,92 @@ class KillSwitchAuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# ── Sprint 13: Provider Health Monitoring & Failover ────────────────────
+
+
+class ProviderHealthCheck(Base):
+    """Health check record for a provider probe."""
+    __tablename__ = "provider_health_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    provider_name: Mapped[str] = mapped_column(String(64), index=True)
+    is_healthy: Mapped[bool] = mapped_column(Boolean, default=True)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    status_code: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str] = mapped_column(String(512), default="")
+    error_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CircuitBreakerState(Base):
+    """Per-provider circuit breaker state."""
+    __tablename__ = "circuit_breaker_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    provider_name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    state: Mapped[str] = mapped_column(String(16), default="closed")  # closed, open, half_open
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_failure_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    opened_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    half_open_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_threshold: Mapped[int] = mapped_column(Integer, default=5)
+    recovery_timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    half_open_max_requests: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProviderCostRecord(Base):
+    """Token consumption and estimated cost per provider per tenant."""
+    __tablename__ = "provider_cost_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    provider_name: Mapped[str] = mapped_column(String(64), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    model: Mapped[str] = mapped_column(String(128), index=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class FailoverPolicy(Base):
+    """Configurable failover policy per provider."""
+    __tablename__ = "failover_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    provider_name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    error_rate_threshold: Mapped[float] = mapped_column(Float, default=0.5)
+    latency_threshold_ms: Mapped[float] = mapped_column(Float, default=5000.0)
+    evaluation_window_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    fallback_provider: Mapped[str] = mapped_column(String(64), default="")
+    auto_failover: Mapped[bool] = mapped_column(Boolean, default=True)
+    require_confirmation: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
