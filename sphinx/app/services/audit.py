@@ -16,7 +16,12 @@ logger = logging.getLogger("sphinx.audit")
 
 
 class AuditEvent(BaseModel):
-    """Schema for audit events written to Kafka."""
+    """Schema for audit events written to Kafka.
+
+    Sprint 18: every event MUST have the required fields:
+    timestamp, request_hash, tenant_id, model, policy_version,
+    risk_score, action_taken, enforcement_duration_ms.
+    """
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: float = Field(default_factory=time.time)
     request_hash: str = ""
@@ -31,7 +36,33 @@ class AuditEvent(BaseModel):
     latency_ms: float = 0.0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # Sprint 18: additional required fields
+    risk_score: float = 0.0
+    action_taken: str = ""  # allow, block, redact, reroute, rate_limit
+    enforcement_duration_ms: float = 0.0
     metadata: dict = Field(default_factory=dict)
+
+    # Sprint 18: hash chain fields (set by writer)
+    previous_hash: str = ""
+    record_hash: str = ""
+
+    REQUIRED_FIELDS: list[str] = Field(
+        default=[
+            "timestamp", "request_hash", "tenant_id", "model",
+            "policy_version", "risk_score", "action_taken",
+            "enforcement_duration_ms",
+        ],
+        exclude=True,
+    )
+
+    def validate_required_fields(self) -> list[str]:
+        """Return list of missing required fields."""
+        missing = []
+        for field_name in self.REQUIRED_FIELDS:
+            val = getattr(self, field_name, None)
+            if val is None or val == "":
+                missing.append(field_name)
+        return missing
 
 
 def compute_request_hash(body: bytes, api_key_id: str, timestamp: float) -> str:
@@ -215,6 +246,12 @@ class AuditEventConsumer:
                 completion_tokens=event_data.get("completion_tokens", 0),
                 metadata_json=json.dumps(event_data.get("metadata", {})),
                 event_timestamp=event_data.get("timestamp", time.time()),
+                # Sprint 18 fields
+                risk_score=event_data.get("risk_score", 0.0),
+                action_taken=event_data.get("action_taken", ""),
+                enforcement_duration_ms=event_data.get("enforcement_duration_ms", 0.0),
+                previous_hash=event_data.get("previous_hash", ""),
+                record_hash=event_data.get("record_hash", ""),
             )
             db.add(record)
             await db.commit()
@@ -268,6 +305,9 @@ async def emit_audit_event(
     latency_ms: float = 0.0,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    risk_score: float = 0.0,
+    action_taken: str = "",
+    enforcement_duration_ms: float = 0.0,
     metadata: Optional[dict] = None,
 ) -> AuditEvent:
     """Convenience function to emit an audit event."""
@@ -286,6 +326,9 @@ async def emit_audit_event(
         latency_ms=latency_ms,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        risk_score=risk_score,
+        action_taken=action_taken or action,
+        enforcement_duration_ms=enforcement_duration_ms,
         metadata=metadata or {},
     )
 

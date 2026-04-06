@@ -2714,3 +2714,150 @@ async def validate_bulk_import(body: BulkImportRequest):
         update_existing=body.update_existing,
     )
     return result.to_dict()
+
+
+# ── Sprint 18: Audit Trail Hardening & Compliance Reports ────────────────
+
+
+@router.get("/audit/query")
+async def query_audit_logs(
+    tenant_id: Optional[str] = None,
+    model: Optional[str] = None,
+    action: Optional[str] = None,
+    risk_level: Optional[str] = None,
+    policy_version: Optional[str] = None,
+    start_timestamp: Optional[float] = None,
+    end_timestamp: Optional[float] = None,
+    page: int = 1,
+    page_size: int = 50,
+):
+    """Query audit logs with filtering and pagination."""
+    from app.services.audit_query import get_audit_query_service, AuditQueryParams
+
+    svc = get_audit_query_service()
+    params = AuditQueryParams(
+        tenant_id=tenant_id,
+        model=model,
+        action=action,
+        risk_level=risk_level,
+        policy_version=policy_version,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+        page=page,
+        page_size=page_size,
+    )
+    result = await svc.query(params)
+    return result.model_dump()
+
+
+@router.get("/audit/verify-chain")
+async def verify_audit_chain(tenant_id: Optional[str] = None, limit: int = 10000):
+    """Verify tamper-evident hash chain integrity on audit records."""
+    from app.services.audit_hash_chain import get_hash_chain_service
+
+    svc = get_hash_chain_service()
+    result = await svc.verify_chain(tenant_id=tenant_id, limit=limit)
+    return result
+
+
+@router.post("/audit/validate-event")
+async def validate_audit_event(body: dict):
+    """Validate that an audit event has all required Sprint 18 fields."""
+    from app.services.audit import AuditEvent
+
+    event = AuditEvent(**body)
+    missing = event.validate_required_fields()
+    return {
+        "valid": len(missing) == 0,
+        "missing_fields": missing,
+        "event_id": event.event_id,
+    }
+
+
+@router.post("/compliance/gdpr")
+async def generate_gdpr_report(
+    tenant_id: Optional[str] = None,
+    days: int = 30,
+    start_timestamp: Optional[float] = None,
+    end_timestamp: Optional[float] = None,
+):
+    """Generate a GDPR compliance report."""
+    from app.services.compliance_reports import get_compliance_report_service, ReportRequest
+
+    svc = get_compliance_report_service()
+    req = ReportRequest(
+        tenant_id=tenant_id,
+        days=days,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+    )
+    report = await svc.generate_gdpr_report(req)
+    return report.model_dump()
+
+
+@router.post("/compliance/hipaa")
+async def generate_hipaa_report(
+    tenant_id: Optional[str] = None,
+    days: int = 30,
+    start_timestamp: Optional[float] = None,
+    end_timestamp: Optional[float] = None,
+):
+    """Generate a HIPAA compliance report."""
+    from app.services.compliance_reports import get_compliance_report_service, ReportRequest
+
+    svc = get_compliance_report_service()
+    req = ReportRequest(
+        tenant_id=tenant_id,
+        days=days,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+    )
+    report = await svc.generate_hipaa_report(req)
+    return report.model_dump()
+
+
+@router.post("/compliance/soc2-pcidss")
+async def generate_soc2_pcidss_report(
+    tenant_id: Optional[str] = None,
+    days: int = 30,
+    start_timestamp: Optional[float] = None,
+    end_timestamp: Optional[float] = None,
+):
+    """Generate a SOC 2 / PCI-DSS evidence export report."""
+    from app.services.compliance_reports import get_compliance_report_service, ReportRequest
+
+    svc = get_compliance_report_service()
+    req = ReportRequest(
+        tenant_id=tenant_id,
+        days=days,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+    )
+    report = await svc.generate_soc2_pcidss_report(req)
+    return report.model_dump()
+
+
+@router.get("/compliance/evidence-export")
+async def export_evidence_zip(
+    tenant_id: Optional[str] = None,
+    days: int = 30,
+    start_timestamp: Optional[float] = None,
+    end_timestamp: Optional[float] = None,
+):
+    """Download a ZIP archive containing GDPR, HIPAA, and SOC 2/PCI-DSS reports."""
+    from fastapi.responses import Response
+    from app.services.compliance_reports import get_compliance_report_service, ReportRequest
+
+    svc = get_compliance_report_service()
+    req = ReportRequest(
+        tenant_id=tenant_id,
+        days=days,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+    )
+    zip_bytes = await svc.export_evidence_zip(req)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=compliance_evidence.zip"},
+    )
