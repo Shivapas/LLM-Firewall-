@@ -12,6 +12,7 @@ import VectorDBDashboardPage from './pages/VectorDBDashboardPage';
 import RoutingRulesPage from './pages/RoutingRulesPage';
 import KillSwitchPage from './pages/KillSwitchPage';
 import MultiModelDashboardPage from './pages/MultiModelDashboardPage';
+import MCPScannerPage from './pages/MCPScannerPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -46,6 +47,7 @@ export default function App() {
                         <Route path="routing-rules" element={<RoutingRulesPage />} />
                         <Route path="kill-switches" element={<KillSwitchPage />} />
                         <Route path="multi-model" element={<MultiModelDashboardPage />} />
+                        <Route path="mcp-scanner" element={<MCPScannerPage />} />
                     </Route>
                 </Routes>
             </BrowserRouter>

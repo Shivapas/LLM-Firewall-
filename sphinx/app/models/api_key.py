@@ -497,3 +497,86 @@ class FailoverPolicy(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# ── Sprint 15: MCP Server Discovery & Risk Scoring ──────────────────────
+
+
+class MCPServer(Base):
+    """Inventory record for a connected MCP server."""
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    server_name: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    url: Mapped[str] = mapped_column(String(512), default="")
+    protocol_version: Mapped[str] = mapped_column(String(32), default="1.0")
+    connected_agents: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    capabilities_json: Mapped[str] = mapped_column(Text, default="[]")
+    aggregate_risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    risk_level: Mapped[str] = mapped_column(String(16), default="low")  # critical, high, medium, low
+    is_reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MCPCapability(Base):
+    """Discovered capability (tool) from an MCP server."""
+    __tablename__ = "mcp_capabilities"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    server_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    tool_name: Mapped[str] = mapped_column(String(256), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    parameter_schema_json: Mapped[str] = mapped_column(Text, default="{}")
+    required_permissions: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    # Risk classification
+    capability_category: Mapped[str] = mapped_column(
+        String(32), default="read"
+    )  # read, write, outbound, delete, admin
+    data_access_scope: Mapped[str] = mapped_column(
+        String(64), default="none"
+    )  # none, local, sensitive, external
+    has_external_network_access: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_destructive: Mapped[bool] = mapped_column(Boolean, default=False)
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    risk_level: Mapped[str] = mapped_column(String(16), default="low")  # critical, high, medium, low
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class MCPRiskAlert(Base):
+    """Alert generated for MCP risk events."""
+    __tablename__ = "mcp_risk_alerts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    alert_type: Mapped[str] = mapped_column(
+        String(64), index=True
+    )  # new_server, critical_capability, unreviewed_connection
+    server_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    server_name: Mapped[str] = mapped_column(String(256), default="")
+    capability_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    tool_name: Mapped[str] = mapped_column(String(256), default="")
+    agent_id: Mapped[str] = mapped_column(String(256), default="")
+    risk_level: Mapped[str] = mapped_column(String(16), default="high")
+    message: Mapped[str] = mapped_column(Text, default="")
+    is_acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    acknowledged_by: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

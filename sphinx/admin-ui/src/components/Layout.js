@@ -41,6 +41,7 @@ export default function Layout() {
                     <Link to="/routing-rules" style={styles.navLink(location.pathname === '/routing-rules')}>Routing Rules</Link>
                     <Link to="/kill-switches" style={styles.navLink(location.pathname === '/kill-switches')}>Kill-Switches</Link>
                     <Link to="/multi-model" style={styles.navLink(location.pathname === '/multi-model')}>Multi-Model</Link>
+                    <Link to="/mcp-scanner" style={styles.navLink(location.pathname === '/mcp-scanner')}>MCP Scanner</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>

@@ -2179,3 +2179,137 @@ async def multi_model_dashboard(db: AsyncSession = Depends(get_db)):
         "active_kill_switches": [ks for ks in kill_switches if ks.get("is_active")],
         "routing_rules": routing_summary,
     }
+
+
+# ── Sprint 15: MCP Server Discovery & Risk Scoring ──────────────────────
+
+
+class RegisterMCPServerRequest(BaseModel):
+    server_name: str
+    url: str
+    protocol_version: str = "1.0"
+    agent_id: str = ""
+
+
+class DiscoverMCPServerRequest(BaseModel):
+    server_name: str
+    url: str
+    agent_id: str = ""
+    protocol_version: str = "1.0"
+
+
+@router.post("/mcp/servers")
+async def register_mcp_server(body: RegisterMCPServerRequest):
+    """Register a new MCP server manually."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    record = svc.register_server_manual(
+        server_name=body.server_name,
+        url=body.url,
+        protocol_version=body.protocol_version,
+        agent_id=body.agent_id,
+    )
+    return record
+
+
+@router.get("/mcp/servers")
+async def list_mcp_servers():
+    """List all registered MCP servers."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    return svc.list_servers()
+
+
+@router.get("/mcp/servers/{server_name}")
+async def get_mcp_server(server_name: str):
+    """Get a specific MCP server by name."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    server = svc.get_server(server_name)
+    if not server:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    return server
+
+
+@router.get("/mcp/servers/{server_name}/capabilities")
+async def get_mcp_server_capabilities(server_name: str):
+    """Get scored capabilities for an MCP server."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    server = svc.get_server(server_name)
+    if not server:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    return svc.get_capabilities(server_name)
+
+
+@router.post("/mcp/servers/{server_name}/review")
+async def mark_mcp_server_reviewed(server_name: str):
+    """Mark an MCP server as reviewed by admin."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    if not svc.mark_reviewed(server_name):
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    return {"status": "reviewed", "server_name": server_name}
+
+
+@router.post("/mcp/servers/{server_name}/connect")
+async def connect_agent_to_mcp(server_name: str, agent_id: str):
+    """Record an agent connecting to an MCP server."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    if not svc.connect_agent(server_name, agent_id):
+        raise HTTPException(status_code=404, detail="MCP server not found")
+    return {"status": "connected", "server_name": server_name, "agent_id": agent_id}
+
+
+@router.post("/mcp/discover")
+async def discover_mcp_server(body: DiscoverMCPServerRequest):
+    """Trigger capability discovery for an MCP server.
+
+    Introspects the MCP server, discovers tools, scores risk, and generates alerts.
+    """
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    result = await svc.discover_server(
+        server_name=body.server_name,
+        url=body.url,
+        agent_id=body.agent_id,
+        protocol_version=body.protocol_version,
+    )
+    if not result.success:
+        raise HTTPException(status_code=502, detail=f"Discovery failed: {result.error}")
+
+    return {
+        "server_name": result.server_name,
+        "url": result.url,
+        "protocol_version": result.protocol_version,
+        "tools_discovered": len(result.tools),
+        "tools": [t.to_dict() for t in result.tools],
+    }
+
+
+@router.get("/mcp/alerts")
+async def list_mcp_alerts(unacknowledged_only: bool = False):
+    """List MCP risk alerts."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    return svc.list_alerts(unacknowledged_only=unacknowledged_only)
+
+
+@router.post("/mcp/alerts/{alert_id}/acknowledge")
+async def acknowledge_mcp_alert(alert_id: str, acknowledged_by: str = "admin"):
+    """Acknowledge an MCP risk alert."""
+    from app.services.mcp.discovery import get_mcp_discovery_service
+
+    svc = get_mcp_discovery_service()
+    if not svc.acknowledge_alert(alert_id, acknowledged_by=acknowledged_by):
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"status": "acknowledged", "alert_id": alert_id}
