@@ -92,7 +92,11 @@ class PolicyRule(Base):
 
 
 class AuditLog(Base):
-    """Audit log for all gateway enforcement events."""
+    """Audit log for all gateway enforcement events.
+
+    Sprint 18: adds risk_score, action_taken, enforcement_duration_ms,
+    previous_hash, record_hash for tamper-evident hash chaining.
+    """
     __tablename__ = "audit_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -112,6 +116,14 @@ class AuditLog(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     metadata_json: Mapped[str] = mapped_column(String(4096), default="{}")
     event_timestamp: Mapped[float] = mapped_column(Float, default=0.0)
+    # Sprint 18: audit trail hardening fields
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    action_taken: Mapped[str] = mapped_column(String(32), default="")
+    enforcement_duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    # Sprint 18: tamper-evident hash chain
+    previous_hash: Mapped[str] = mapped_column(String(64), default="")
+    record_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    chain_sequence: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

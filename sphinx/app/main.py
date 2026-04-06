@@ -25,6 +25,9 @@ from app.services.mcp.compliance_tagger import get_compliance_tagging_service
 from app.services.mcp.agent_risk_score import get_agent_risk_score_service
 from app.services.mcp.bulk_import import get_bulk_import_service
 from app.services.mcp.dashboard import get_guardrail_dashboard_service
+from app.services.audit_hash_chain import get_hash_chain_service
+from app.services.audit_query import get_audit_query_service
+from app.services.compliance_reports import get_compliance_report_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -152,7 +155,18 @@ async def lifespan(app: FastAPI):
         )
         logger.info("MCP guardrails dashboard service initialized")
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready")
+        # Sprint 18: Initialize Audit Trail Hardening & Compliance Reports
+        hash_chain = get_hash_chain_service(session_factory=async_session)
+        await hash_chain.initialize()
+        logger.info("Audit hash chain service initialized")
+
+        audit_query = get_audit_query_service(session_factory=async_session)
+        logger.info("Audit query service initialized")
+
+        compliance_reports = get_compliance_report_service(session_factory=async_session)
+        logger.info("Compliance report service initialized")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
@@ -187,7 +201,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sphinx AI Mesh Firewall",
     description="Gateway proxy for LLM provider traffic with multi-provider routing and audit",
-    version="0.8.0",
+    version="0.9.0",
     lifespan=lifespan,
 )
 
