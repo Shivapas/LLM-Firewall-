@@ -45,6 +45,7 @@ class KillSwitch(Base):
     fallback_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     activated_by: Mapped[str] = mapped_column(String(128))
     reason: Mapped[str] = mapped_column(String(512), default="")
+    error_message: Mapped[str] = mapped_column(String(512), default="Model temporarily unavailable")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -385,4 +386,25 @@ class ProviderCredential(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KillSwitchAuditLog(Base):
+    """Immutable audit log for kill-switch activations/deactivations.
+
+    Records cannot be deleted via API — ensures compliance traceability.
+    """
+    __tablename__ = "kill_switch_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    model_name: Mapped[str] = mapped_column(String(128), index=True)
+    action: Mapped[str] = mapped_column(String(16))  # block | reroute
+    fallback_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    activated_by: Mapped[str] = mapped_column(String(128))
+    reason: Mapped[str] = mapped_column(String(512), default="")
+    event_type: Mapped[str] = mapped_column(String(16))  # activated | deactivated
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )

@@ -11,6 +11,8 @@ from app.services.providers.openai import OpenAIProvider
 from app.services.providers.anthropic import AnthropicProvider
 from app.services.providers.gemini import GeminiProvider
 from app.services.providers.llama import LlamaProvider
+from app.services.providers.bedrock import BedrockProvider
+from app.services.providers.azure_openai import AzureOpenAIProvider
 
 logger = logging.getLogger("sphinx.providers.registry")
 
@@ -19,7 +21,7 @@ logger = logging.getLogger("sphinx.providers.registry")
 MODEL_PROVIDER_MAP: dict[str, str] = {}
 
 # Build from provider classes
-for _provider_cls in [OpenAIProvider, AnthropicProvider, GeminiProvider, LlamaProvider]:
+for _provider_cls in [OpenAIProvider, AnthropicProvider, GeminiProvider, LlamaProvider, BedrockProvider, AzureOpenAIProvider]:
     for _model in _provider_cls.supported_models:
         MODEL_PROVIDER_MAP[_model] = _provider_cls.provider_name
 
@@ -76,6 +78,10 @@ class ProviderRegistry:
             "gemini-": "gemini",
             "llama-": "llama",
             "codellama-": "llama",
+            "anthropic.": "bedrock",
+            "amazon.titan": "bedrock",
+            "meta.llama": "bedrock",
+            "azure-": "azure_openai",
         }
         for prefix, provider in prefix_map.items():
             if model_name.startswith(prefix):

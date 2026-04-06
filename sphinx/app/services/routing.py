@@ -38,6 +38,8 @@ async def initialize_registry(providers: list[dict]) -> ProviderRegistry:
     from app.services.providers.anthropic import AnthropicProvider
     from app.services.providers.gemini import GeminiProvider
     from app.services.providers.llama import LlamaProvider
+    from app.services.providers.bedrock import BedrockProvider
+    from app.services.providers.azure_openai import AzureOpenAIProvider
 
     registry = get_registry()
 
@@ -46,6 +48,8 @@ async def initialize_registry(providers: list[dict]) -> ProviderRegistry:
         "anthropic": AnthropicProvider,
         "gemini": GeminiProvider,
         "llama": LlamaProvider,
+        "bedrock": BedrockProvider,
+        "azure_openai": AzureOpenAIProvider,
     }
 
     for p in providers:
