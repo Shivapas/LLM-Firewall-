@@ -17,6 +17,7 @@ from app.services.kill_switch import (
     activate_kill_switch,
     deactivate_kill_switch,
     list_kill_switches,
+    get_kill_switch_audit_log,
 )
 from app.services.policy_cache import force_refresh, get_all_policies
 from app.services.threat_detection.engine import get_threat_engine
@@ -175,6 +176,7 @@ class ActivateKillSwitchRequest(BaseModel):
     fallback_model: Optional[str] = None
     activated_by: str
     reason: str = ""
+    error_message: Optional[str] = None
 
 
 class KillSwitchInfo(BaseModel):
@@ -184,7 +186,20 @@ class KillSwitchInfo(BaseModel):
     fallback_model: Optional[str]
     activated_by: str
     reason: str
+    error_message: Optional[str] = "Model temporarily unavailable"
     is_active: bool
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime] = None
+
+
+class KillSwitchAuditEntry(BaseModel):
+    id: str
+    model_name: str
+    action: str
+    fallback_model: Optional[str]
+    activated_by: str
+    reason: str
+    event_type: str
     created_at: Optional[datetime]
 
 
@@ -201,6 +216,7 @@ async def activate_kill_switch_endpoint(
             activated_by=body.activated_by,
             reason=body.reason,
             fallback_model=body.fallback_model,
+            error_message=body.error_message,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -212,6 +228,16 @@ async def list_kill_switches_endpoint(db: AsyncSession = Depends(get_db)):
     """List all kill-switches."""
     switches = await list_kill_switches(db)
     return [KillSwitchInfo(**s) for s in switches]
+
+
+@router.get("/kill-switches/audit", response_model=list[KillSwitchAuditEntry])
+async def get_kill_switch_audit_endpoint(
+    model_name: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get immutable kill-switch audit log. Records cannot be deleted."""
+    logs = await get_kill_switch_audit_log(db, model_name=model_name)
+    return [KillSwitchAuditEntry(**log) for log in logs]
 
 
 @router.delete("/kill-switches/{model_name}")

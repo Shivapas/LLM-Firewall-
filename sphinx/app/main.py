@@ -9,7 +9,7 @@ from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
 from app.services.policy_cache import load_policies, start_background_refresh, stop_background_refresh
-from app.services.kill_switch import sync_kill_switches_to_cache
+from app.services.kill_switch import sync_kill_switches_to_cache, start_kill_switch_subscriber, stop_kill_switch_subscriber
 from app.services.routing import initialize_registry
 from app.services.credential_store import list_providers, get_provider_credential
 from app.services.audit import get_audit_writer, get_audit_consumer
@@ -96,13 +96,17 @@ async def lifespan(app: FastAPI):
             tier2_scanner.index_size,
         )
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, audit system ready")
+        # Start kill-switch pub/sub subscriber for sub-5s propagation
+        await start_kill_switch_subscriber()
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
     yield
 
     # Shutdown
+    await stop_kill_switch_subscriber()
     stop_background_refresh()
 
     # Close audit system

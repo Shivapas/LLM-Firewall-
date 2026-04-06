@@ -72,18 +72,24 @@ async def gateway_proxy(request: Request, path: str) -> Response:
         ks = await check_kill_switch(model_name)
         if ks is not None:
             if ks["action"] == "block":
+                error_msg = ks.get("error_message", "Model temporarily unavailable")
                 logger.warning(
-                    "Kill-switch BLOCKED model=%s tenant=%s reason=%s",
-                    model_name, tenant_id, ks.get("reason", ""),
+                    "Kill-switch BLOCKED model=%s tenant=%s activated_by=%s reason=%s timestamp=%s",
+                    model_name, tenant_id, ks.get("activated_by", "unknown"),
+                    ks.get("reason", ""), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 )
                 latency_ms = (time.time() - start_time) * 1000
                 try:
                     await emit_audit_event(
                         request_body=body, tenant_id=tenant_id, project_id=project_id,
                         api_key_id=str(api_key_id) if api_key_id else "",
-                        model=model_name, action="blocked",
+                        model=model_name, action="blocked_kill_switch",
                         status_code=503, latency_ms=latency_ms,
-                        metadata={"reason": ks.get("reason", "Kill-switch active")},
+                        metadata={
+                            "reason": ks.get("reason", "Kill-switch active"),
+                            "activated_by": ks.get("activated_by", "unknown"),
+                            "kill_switch_action": "block",
+                        },
                     )
                 except Exception:
                     logger.debug("Failed to emit audit event", exc_info=True)
@@ -91,21 +97,42 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 return JSONResponse(
                     status_code=503,
                     content={
-                        "error": "Model temporarily unavailable",
+                        "error": error_msg,
                         "model": model_name,
                         "reason": ks.get("reason", "Kill-switch active"),
                     },
                 )
             elif ks["action"] == "reroute" and ks.get("fallback_model"):
+                original_model = model_name
                 logger.info(
-                    "Kill-switch REROUTING model=%s -> %s tenant=%s",
+                    "Kill-switch REROUTING model=%s -> %s tenant=%s activated_by=%s reason=%s timestamp=%s",
                     model_name, ks["fallback_model"], tenant_id,
+                    ks.get("activated_by", "unknown"), ks.get("reason", ""),
+                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 )
-                audit_action = "rerouted"
+                audit_action = "rerouted_kill_switch"
                 payload = json.loads(body)
                 payload["model"] = ks["fallback_model"]
                 body = json.dumps(payload).encode()
                 model_name = ks["fallback_model"]
+
+                # Log reroute event for audit
+                try:
+                    await emit_audit_event(
+                        request_body=body, tenant_id=tenant_id, project_id=project_id,
+                        api_key_id=str(api_key_id) if api_key_id else "",
+                        model=original_model, action="rerouted_kill_switch",
+                        status_code=200, latency_ms=0,
+                        metadata={
+                            "original_model": original_model,
+                            "fallback_model": ks["fallback_model"],
+                            "activated_by": ks.get("activated_by", "unknown"),
+                            "reason": ks.get("reason", ""),
+                            "kill_switch_action": "reroute",
+                        },
+                    )
+                except Exception:
+                    logger.debug("Failed to emit reroute audit event", exc_info=True)
 
     # ── RAG Pipeline Classification & Query Firewall ──
     rag_pipeline = get_rag_pipeline()
