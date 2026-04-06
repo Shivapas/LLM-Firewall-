@@ -20,6 +20,11 @@ from app.services.circuit_breaker import sync_circuit_breakers_from_db
 from app.services.failover_policy import get_failover_engine
 from app.services.mcp.discovery import get_mcp_discovery_service
 from app.services.mcp.agent_scope import get_agent_scope_service
+from app.services.mcp.tool_call_audit import get_tool_call_audit_service
+from app.services.mcp.compliance_tagger import get_compliance_tagging_service
+from app.services.mcp.agent_risk_score import get_agent_risk_score_service
+from app.services.mcp.bulk_import import get_bulk_import_service
+from app.services.mcp.dashboard import get_guardrail_dashboard_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -122,7 +127,32 @@ async def lifespan(app: FastAPI):
         agent_scope = get_agent_scope_service(session_factory=async_session)
         logger.info("Agent scope enforcement service initialized")
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready")
+        # Sprint 17: Initialize MCP Guardrails Dashboard & Compliance Tagging
+        tool_call_audit = get_tool_call_audit_service(session_factory=async_session)
+        logger.info("Tool call audit service initialized")
+
+        compliance_tagger = get_compliance_tagging_service()
+        logger.info("Compliance tagging service initialized")
+
+        agent_risk_scorer = get_agent_risk_score_service(
+            discovery_service=mcp_discovery,
+            scope_service=agent_scope,
+            audit_service=tool_call_audit,
+        )
+        logger.info("Agent risk score service initialized")
+
+        bulk_importer = get_bulk_import_service(scope_service=agent_scope)
+        logger.info("Bulk import service initialized")
+
+        dashboard = get_guardrail_dashboard_service(
+            scope_service=agent_scope,
+            discovery_service=mcp_discovery,
+            audit_service=tool_call_audit,
+            risk_score_service=agent_risk_scorer,
+        )
+        logger.info("MCP guardrails dashboard service initialized")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 

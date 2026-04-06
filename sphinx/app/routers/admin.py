@@ -2465,3 +2465,252 @@ async def get_agent_violation_counts(agent_id: str):
 
     svc = get_agent_scope_service()
     return svc.get_violation_counts(agent_id=agent_id)
+
+
+# ── Sprint 17: MCP Guardrails Dashboard & Compliance Tagging ────────────
+
+
+# ── Dashboard Endpoints ──────────────────────────────────────────────────
+
+
+@router.get("/mcp/dashboard")
+async def get_mcp_dashboard():
+    """Get live MCP guardrails dashboard snapshot.
+
+    Returns: per-agent connectivity, violation counts (24h),
+    kill-switch events, tool call volume, risk scores.
+    """
+    from app.services.mcp.dashboard import get_guardrail_dashboard_service
+
+    svc = get_guardrail_dashboard_service()
+    snapshot = svc.get_snapshot()
+    return snapshot.to_dict()
+
+
+@router.get("/mcp/dashboard/agent/{agent_id}")
+async def get_mcp_dashboard_agent_detail(agent_id: str):
+    """Get detailed dashboard view for a specific agent."""
+    from app.services.mcp.dashboard import get_guardrail_dashboard_service
+
+    svc = get_guardrail_dashboard_service()
+    detail = svc.get_agent_detail(agent_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return detail
+
+
+# ── Tool Call Audit Endpoints ────────────────────────────────────────────
+
+
+class RecordToolCallRequest(BaseModel):
+    agent_id: str
+    tool_name: str
+    mcp_server: str
+    input_data: Optional[dict] = None
+    output_data: Optional[dict] = None
+    action: str = "allowed"
+    compliance_tags: list[str] = []
+    latency_ms: float = 0.0
+    metadata: Optional[dict] = None
+
+
+@router.post("/mcp/tool-calls/audit")
+async def record_tool_call(body: RecordToolCallRequest):
+    """Record an MCP tool call in the audit log."""
+    from app.services.mcp.tool_call_audit import get_tool_call_audit_service
+
+    svc = get_tool_call_audit_service()
+    record = svc.record_call(
+        agent_id=body.agent_id,
+        tool_name=body.tool_name,
+        mcp_server=body.mcp_server,
+        input_data=body.input_data,
+        output_data=body.output_data,
+        action=body.action,
+        compliance_tags=body.compliance_tags,
+        latency_ms=body.latency_ms,
+        metadata=body.metadata,
+    )
+    return record.to_dict()
+
+
+@router.get("/mcp/tool-calls/audit")
+async def list_tool_call_audits(
+    agent_id: Optional[str] = None,
+    tool_name: Optional[str] = None,
+    mcp_server: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Query MCP tool call audit records."""
+    from app.services.mcp.tool_call_audit import get_tool_call_audit_service
+
+    svc = get_tool_call_audit_service()
+    records = svc.list_records(
+        agent_id=agent_id,
+        tool_name=tool_name,
+        mcp_server=mcp_server,
+        action=action,
+        limit=limit,
+        offset=offset,
+    )
+    return [r.to_dict() for r in records]
+
+
+@router.get("/mcp/tool-calls/volume")
+async def get_tool_call_volume():
+    """Get tool call volume grouped by agent."""
+    from app.services.mcp.tool_call_audit import get_tool_call_audit_service
+
+    svc = get_tool_call_audit_service()
+    return svc.get_agent_tool_call_volume()
+
+
+# ── Compliance Tagging Endpoints ─────────────────────────────────────────
+
+
+class ComplianceScanRequest(BaseModel):
+    content: str
+    agent_id: str = ""
+    tool_name: str = ""
+    mcp_server: str = ""
+
+
+class AddCompliancePatternRequest(BaseModel):
+    label: str
+    pattern: str
+
+
+@router.post("/mcp/compliance/scan")
+async def scan_for_compliance(body: ComplianceScanRequest):
+    """Scan content for compliance tags (PII, PHI, FINANCIAL, etc.)."""
+    from app.services.mcp.compliance_tagger import get_compliance_tagging_service
+
+    svc = get_compliance_tagging_service()
+    tagged = svc.tag_response(
+        content=body.content,
+        agent_id=body.agent_id,
+        tool_name=body.tool_name,
+        mcp_server=body.mcp_server,
+    )
+    return tagged.to_dict()
+
+
+@router.post("/mcp/compliance/patterns")
+async def add_compliance_pattern(body: AddCompliancePatternRequest):
+    """Add a custom compliance detection pattern."""
+    import re as re_module
+    try:
+        re_module.compile(body.pattern)
+    except re_module.error as e:
+        raise HTTPException(status_code=400, detail=f"Invalid regex pattern: {e}")
+
+    from app.services.mcp.compliance_tagger import get_compliance_tagging_service
+
+    svc = get_compliance_tagging_service()
+    svc.add_custom_pattern(body.label, body.pattern)
+    return {"status": "added", "label": body.label}
+
+
+@router.get("/mcp/compliance/labels")
+async def list_compliance_labels():
+    """List all available compliance labels."""
+    from app.services.mcp.compliance_tagger import get_compliance_tagging_service
+
+    svc = get_compliance_tagging_service()
+    return {"labels": svc.list_labels()}
+
+
+# ── Agent Risk Score Endpoints ───────────────────────────────────────────
+
+
+@router.get("/agents/{agent_id}/risk-score")
+async def get_agent_risk_score(agent_id: str):
+    """Get the current aggregate risk score for an agent."""
+    from app.services.mcp.agent_risk_score import get_agent_risk_score_service
+
+    svc = get_agent_risk_score_service()
+    breakdown = svc.compute_risk_score(agent_id)
+    return breakdown.to_dict()
+
+
+@router.get("/agents/risk-scores")
+async def get_all_agent_risk_scores():
+    """Get risk scores for all agents."""
+    from app.services.mcp.agent_risk_score import get_agent_risk_score_service
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    scope_svc = get_agent_scope_service()
+    risk_svc = get_agent_risk_score_service()
+
+    agent_ids = [a.agent_id for a in scope_svc.list_accounts()]
+    results = risk_svc.recompute_all(agent_ids)
+    return {agent_id: bd.to_dict() for agent_id, bd in results.items()}
+
+
+# ── Bulk Import Endpoints ────────────────────────────────────────────────
+
+
+class BulkImportRequest(BaseModel):
+    policies: list[dict]
+    dry_run: bool = False
+    update_existing: bool = True
+
+
+class BulkImportYAMLRequest(BaseModel):
+    yaml_content: str
+    dry_run: bool = False
+    update_existing: bool = True
+
+
+@router.post("/agents/bulk-import")
+async def bulk_import_agent_policies(body: BulkImportRequest):
+    """Bulk import agent scope policies from JSON.
+
+    Accepts a list of agent policy objects. Each must have agent_id
+    and may include: display_name, description, allowed_mcp_servers,
+    allowed_tools, context_scope, redact_fields.
+    """
+    from app.services.mcp.bulk_import import get_bulk_import_service
+
+    svc = get_bulk_import_service()
+    result = svc.import_policies(
+        policies=body.policies,
+        dry_run=body.dry_run,
+        update_existing=body.update_existing,
+    )
+    return result.to_dict()
+
+
+@router.post("/agents/bulk-import/yaml")
+async def bulk_import_agent_policies_yaml(body: BulkImportYAMLRequest):
+    """Bulk import agent scope policies from YAML content."""
+    from app.services.mcp.bulk_import import get_bulk_import_service
+
+    svc = get_bulk_import_service()
+    try:
+        policies = svc.parse_yaml(body.yaml_content)
+    except (ValueError, ImportError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    result = svc.import_policies(
+        policies=policies,
+        dry_run=body.dry_run,
+        update_existing=body.update_existing,
+    )
+    return result.to_dict()
+
+
+@router.post("/agents/bulk-import/validate")
+async def validate_bulk_import(body: BulkImportRequest):
+    """Validate agent scope policies without importing (dry run)."""
+    from app.services.mcp.bulk_import import get_bulk_import_service
+
+    svc = get_bulk_import_service()
+    result = svc.import_policies(
+        policies=body.policies,
+        dry_run=True,
+        update_existing=body.update_existing,
+    )
+    return result.to_dict()
