@@ -1,5 +1,7 @@
-"""Sprint 25 — Agent Memory Store Firewall: Write Interception.
+"""Sprints 25–26 — Agent Memory Store Firewall.
 
-Intercepts agent memory write operations and scans for instruction-like
-patterns that could constitute memory poisoning attacks.
+Sprint 25: Write interception with instruction-pattern scanning.
+Sprint 26: Read anomaly detection, lifecycle cap enforcement,
+           integrity verification, cross-agent memory isolation,
+           and memory store admin dashboard.
 """
