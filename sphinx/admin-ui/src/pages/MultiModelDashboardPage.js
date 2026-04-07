@@ -54,7 +54,7 @@ export default function MultiModelDashboardPage() {
         setLoading(false);
     };
 
-    useEffect(() => { fetchDashboard(); }, []);
+    useEffect(() => { fetchDashboard(); }, [apiFetch]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (loading && !data) return <div>Loading dashboard...</div>;
     if (!data) return <div>Failed to load dashboard data.</div>;

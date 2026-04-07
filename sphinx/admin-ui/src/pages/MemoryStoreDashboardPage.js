@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
   container: { padding: '24px', maxWidth: '1400px', margin: '0 auto' },
@@ -21,6 +22,7 @@ const styles = {
 };
 
 export default function MemoryStoreDashboardPage() {
+  const { apiFetch } = useAuth();
   const [dashboard, setDashboard] = useState(null);
   const [anomalies, setAnomalies] = useState([]);
   const [integrityAlerts, setIntegrityAlerts] = useState([]);
@@ -29,7 +31,7 @@ export default function MemoryStoreDashboardPage() {
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const res = await fetch('/admin/memory-firewall/dashboard');
+      const res = await apiFetch('/admin/memory-firewall/dashboard');
       if (!res.ok) throw new Error('Failed to fetch dashboard');
       setDashboard(await res.json());
     } catch (e) {
@@ -39,14 +41,14 @@ export default function MemoryStoreDashboardPage() {
 
   const fetchAnomalies = useCallback(async () => {
     try {
-      const res = await fetch('/admin/memory-firewall/read-anomalies?limit=20');
+      const res = await apiFetch('/admin/memory-firewall/read-anomalies?limit=20');
       if (res.ok) setAnomalies(await res.json());
     } catch (_) {}
   }, []);
 
   const fetchIntegrityAlerts = useCallback(async () => {
     try {
-      const res = await fetch('/admin/memory-firewall/integrity/alerts?limit=20');
+      const res = await apiFetch('/admin/memory-firewall/integrity/alerts?limit=20');
       if (res.ok) setIntegrityAlerts(await res.json());
     } catch (_) {}
   }, []);
@@ -58,7 +60,7 @@ export default function MemoryStoreDashboardPage() {
 
   const runIntegrityCheck = async () => {
     try {
-      const res = await fetch('/admin/memory-firewall/integrity/verify', { method: 'POST' });
+      const res = await apiFetch('/admin/memory-firewall/integrity/verify', { method: 'POST' });
       if (!res.ok) throw new Error('Integrity check failed');
       await Promise.all([fetchDashboard(), fetchIntegrityAlerts()]);
     } catch (e) {

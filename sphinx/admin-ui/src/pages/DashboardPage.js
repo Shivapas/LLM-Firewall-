@@ -30,7 +30,7 @@ export default function DashboardPage() {
         const load = async () => {
             try {
                 const [hRes, kRes, pRes] = await Promise.all([
-                    fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/ready`),
+                    apiFetch('/ready'),
                     apiFetch('/admin/keys'),
                     apiFetch('/admin/policies/cache/status'),
                 ]);

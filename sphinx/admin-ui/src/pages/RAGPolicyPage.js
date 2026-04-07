@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API_BASE = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const TOGGLE_FIELDS = [
   { key: 'query_stage_enabled', label: 'Query Stage', group: 'Stages' },
@@ -34,6 +33,7 @@ const DEFAULT_FORM = {
 };
 
 function RAGPolicyPage() {
+  const { apiFetch } = useAuth();
   const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -49,7 +49,7 @@ function RAGPolicyPage() {
   const fetchPolicies = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/admin/rag-policies`);
+      const res = await apiFetch(`/admin/rag-policies`);
       if (!res.ok) throw new Error('Failed to fetch RAG policies');
       setPolicies(await res.json());
     } catch (err) {
@@ -72,12 +72,12 @@ function RAGPolicyPage() {
     setError(null);
     try {
       const url = editingId
-        ? `${API_BASE}/admin/rag-policies/${editingId}`
-        : `${API_BASE}/admin/rag-policies`;
+        ? `/admin/rag-policies/${editingId}`
+        : `/admin/rag-policies`;
       const method = editingId ? 'PATCH' : 'POST';
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+
         body: JSON.stringify(form),
       });
       if (!res.ok) {
@@ -116,7 +116,7 @@ function RAGPolicyPage() {
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this RAG policy?')) return;
     try {
-      const res = await fetch(`${API_BASE}/admin/rag-policies/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/admin/rag-policies/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete');
       fetchPolicies();
     } catch (err) {
@@ -126,9 +126,9 @@ function RAGPolicyPage() {
 
   const handleToggle = async (policy) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/rag-policies/${policy.id}`, {
+      const res = await apiFetch(`/admin/rag-policies/${policy.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+
         body: JSON.stringify({ is_active: !policy.is_active }),
       });
       if (!res.ok) throw new Error('Failed to toggle');
@@ -144,21 +144,21 @@ function RAGPolicyPage() {
     try {
       let url, payload;
       if (testMode === 'classify') {
-        url = `${API_BASE}/admin/rag-pipeline/classify`;
+        url = `/admin/rag-pipeline/classify`;
         payload = { body: { messages: [{ role: 'user', content: testQuery }], rag_config: {} } };
       } else if (testMode === 'intent') {
-        url = `${API_BASE}/admin/rag-pipeline/classify-intent`;
+        url = `/admin/rag-pipeline/classify-intent`;
         payload = { query: testQuery };
       } else if (testMode === 'scan') {
-        url = `${API_BASE}/admin/rag-pipeline/scan-query`;
+        url = `/admin/rag-pipeline/scan-query`;
         payload = { query: testQuery };
       } else {
-        url = `${API_BASE}/admin/rag-pipeline/process`;
+        url = `/admin/rag-pipeline/process`;
         payload = { body: { messages: [{ role: 'user', content: testQuery }], rag_config: {} } };
       }
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+
         body: JSON.stringify(payload),
       });
       if (res.ok) setTestResult(await res.json());

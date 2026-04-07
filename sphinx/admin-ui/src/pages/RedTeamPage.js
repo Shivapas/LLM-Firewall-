@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 1200, margin: '0 auto' },
@@ -70,6 +69,7 @@ const statusColor = {
 };
 
 export default function RedTeamPage() {
+    const { apiFetch } = useAuth();
     const [campaigns, setCampaigns] = useState([]);
     const [probeInfo, setProbeInfo] = useState(null);
     const [selectedCampaign, setSelectedCampaign] = useState(null);
@@ -88,7 +88,7 @@ export default function RedTeamPage() {
 
     const fetchCampaigns = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/admin/red-team/campaigns`);
+            const res = await apiFetch(`/admin/red-team/campaigns`);
             setCampaigns(await res.json());
         } catch (e) { console.error(e); }
         setLoading(false);
@@ -96,7 +96,7 @@ export default function RedTeamPage() {
 
     const fetchProbeInfo = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/admin/red-team/probes`);
+            const res = await apiFetch(`/admin/red-team/probes`);
             setProbeInfo(await res.json());
         } catch (e) { console.error(e); }
     }, []);
@@ -113,8 +113,8 @@ export default function RedTeamPage() {
 
     const handleCreate = async () => {
         try {
-            const res = await fetch(`${API}/admin/red-team/campaigns`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
+            const res = await apiFetch(`/admin/red-team/campaigns`, {
+                method: 'POST',
                 body: JSON.stringify(form),
             });
             if (res.ok) {
@@ -127,7 +127,7 @@ export default function RedTeamPage() {
 
     const handleRun = async (campaignId) => {
         try {
-            await fetch(`${API}/admin/red-team/campaigns/${campaignId}/run`, { method: 'POST' });
+            await apiFetch(`/admin/red-team/campaigns/${campaignId}/run`, { method: 'POST' });
             fetchCampaigns();
         } catch (e) { console.error(e); }
     };
@@ -135,7 +135,7 @@ export default function RedTeamPage() {
     const handleDelete = async (campaignId) => {
         if (!window.confirm('Delete this campaign?')) return;
         try {
-            await fetch(`${API}/admin/red-team/campaigns/${campaignId}`, { method: 'DELETE' });
+            await apiFetch(`/admin/red-team/campaigns/${campaignId}`, { method: 'DELETE' });
             if (selectedCampaign && selectedCampaign.id === campaignId) setSelectedCampaign(null);
             fetchCampaigns();
         } catch (e) { console.error(e); }
@@ -145,18 +145,18 @@ export default function RedTeamPage() {
         setSelectedCampaign(campaign);
         setReport(null);
         try {
-            let url = `${API}/admin/red-team/campaigns/${campaign.id}/results?`;
+            let url = `/admin/red-team/campaigns/${campaign.id}/results?`;
             if (filterCategory) url += `category=${filterCategory}&`;
             if (filterSeverity) url += `severity=${filterSeverity}&`;
             if (filterDetectedOnly) url += `detected_only=true&`;
-            const res = await fetch(url);
+            const res = await apiFetch(url);
             setResults(await res.json());
         } catch (e) { console.error(e); }
     };
 
     const handleExportReport = async (campaignId) => {
         try {
-            const res = await fetch(`${API}/admin/red-team/campaigns/${campaignId}/report`);
+            const res = await apiFetch(`/admin/red-team/campaigns/${campaignId}/report`);
             if (res.ok) setReport(await res.json());
         } catch (e) { console.error(e); }
     };

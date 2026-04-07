@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 1100, margin: '0 auto' },
@@ -43,6 +42,7 @@ const styles = {
 const deliveryColor = { sent: '#2e7d32', failed: '#d32f2f', pending: '#f9a825', cooldown: '#9e9e9e' };
 
 export default function AlertManagementPage() {
+    const { apiFetch } = useAuth();
     const [rules, setRules] = useState([]);
     const [events, setEvents] = useState([]);
     const [showCreate, setShowCreate] = useState(false);
@@ -53,37 +53,43 @@ export default function AlertManagementPage() {
 
     const fetchRules = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/admin/alerts/rules`);
-            setRules(await res.json());
+            const res = await apiFetch('/admin/alerts/rules');
+            if (res.ok) setRules(await res.json());
         } catch (e) { console.error(e); }
     }, []);
 
     const fetchEvents = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/admin/alerts/events?limit=20`);
-            setEvents(await res.json());
+            const res = await apiFetch('/admin/alerts/events?limit=20');
+            if (res.ok) setEvents(await res.json());
         } catch (e) { console.error(e); }
     }, []);
 
     useEffect(() => { fetchRules(); fetchEvents(); }, [fetchRules, fetchEvents]);
 
     const createRule = async () => {
-        await fetch(`${API}/admin/alerts/rules`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(form),
-        });
-        setShowCreate(false);
-        fetchRules();
+        try {
+            const res = await apiFetch('/admin/alerts/rules', {
+                method: 'POST',
+                body: JSON.stringify(form),
+            });
+            if (!res.ok) throw new Error('Failed to create alert rule');
+            setShowCreate(false);
+            fetchRules();
+        } catch (e) { console.error(e); }
     };
 
     const deleteRule = async (id) => {
-        await fetch(`${API}/admin/alerts/rules/${id}`, { method: 'DELETE' });
-        fetchRules();
+        try {
+            const res = await apiFetch(`/admin/alerts/rules/${id}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to delete alert rule');
+            fetchRules();
+        } catch (e) { console.error(e); }
     };
 
     const evaluateAll = async () => {
         try {
-            const res = await fetch(`${API}/admin/alerts/evaluate`, { method: 'POST' });
+            const res = await apiFetch('/admin/alerts/evaluate', { method: 'POST' });
             const data = await res.json();
             alert(`Evaluated: ${data.fired_count} alert(s) fired`);
             fetchEvents();
