@@ -3986,7 +3986,11 @@ class CreateRedTeamCampaignRequest(BaseModel):
     name: str
     target_url: str
     description: str = ""
-    probe_categories: list[str] = ["injection", "jailbreak", "pii_extraction"]
+    probe_categories: list[str] = [
+        "injection", "jailbreak", "pii_extraction",
+        "tool_call_injection", "memory_poisoning",
+        "privilege_escalation", "multi_step_attack",
+    ]
     concurrency: int = 10
     timeout_seconds: int = 30
     created_by: str = "admin"
@@ -4085,23 +4089,28 @@ async def list_available_probes():
     from app.services.red_team.probes.injection import INJECTION_PROBES
     from app.services.red_team.probes.jailbreak import JAILBREAK_PROBES
     from app.services.red_team.probes.pii_extraction import PII_EXTRACTION_PROBES
-    return {
-        "total": len(INJECTION_PROBES) + len(JAILBREAK_PROBES) + len(PII_EXTRACTION_PROBES),
-        "suites": {
-            "injection": {
-                "count": len(INJECTION_PROBES),
-                "techniques": list(set(p["technique"] for p in INJECTION_PROBES)),
-            },
-            "jailbreak": {
-                "count": len(JAILBREAK_PROBES),
-                "techniques": list(set(p["technique"] for p in JAILBREAK_PROBES)),
-            },
-            "pii_extraction": {
-                "count": len(PII_EXTRACTION_PROBES),
-                "techniques": list(set(p["technique"] for p in PII_EXTRACTION_PROBES)),
-            },
-        },
+    from app.services.red_team.probes.tool_call_injection import TOOL_CALL_INJECTION_PROBES
+    from app.services.red_team.probes.memory_poisoning import MEMORY_POISONING_PROBES
+    from app.services.red_team.probes.privilege_escalation import PRIVILEGE_ESCALATION_PROBES
+    from app.services.red_team.probes.multi_step_attack import MULTI_STEP_ATTACK_PROBES
+    all_suites = {
+        "injection": INJECTION_PROBES,
+        "jailbreak": JAILBREAK_PROBES,
+        "pii_extraction": PII_EXTRACTION_PROBES,
+        "tool_call_injection": TOOL_CALL_INJECTION_PROBES,
+        "memory_poisoning": MEMORY_POISONING_PROBES,
+        "privilege_escalation": PRIVILEGE_ESCALATION_PROBES,
+        "multi_step_attack": MULTI_STEP_ATTACK_PROBES,
     }
+    total = sum(len(probes) for probes in all_suites.values())
+    suites_summary = {
+        name: {
+            "count": len(probes),
+            "techniques": list(set(p["technique"] for p in probes)),
+        }
+        for name, probes in all_suites.items()
+    }
+    return {"total": total, "suites": suites_summary}
 
 
 @router.get("/red-team/probes/{category}")
@@ -4110,10 +4119,18 @@ async def list_probes_by_category(category: str):
     from app.services.red_team.probes.injection import INJECTION_PROBES
     from app.services.red_team.probes.jailbreak import JAILBREAK_PROBES
     from app.services.red_team.probes.pii_extraction import PII_EXTRACTION_PROBES
+    from app.services.red_team.probes.tool_call_injection import TOOL_CALL_INJECTION_PROBES
+    from app.services.red_team.probes.memory_poisoning import MEMORY_POISONING_PROBES
+    from app.services.red_team.probes.privilege_escalation import PRIVILEGE_ESCALATION_PROBES
+    from app.services.red_team.probes.multi_step_attack import MULTI_STEP_ATTACK_PROBES
     suites = {
         "injection": INJECTION_PROBES,
         "jailbreak": JAILBREAK_PROBES,
         "pii_extraction": PII_EXTRACTION_PROBES,
+        "tool_call_injection": TOOL_CALL_INJECTION_PROBES,
+        "memory_poisoning": MEMORY_POISONING_PROBES,
+        "privilege_escalation": PRIVILEGE_ESCALATION_PROBES,
+        "multi_step_attack": MULTI_STEP_ATTACK_PROBES,
     }
     if category not in suites:
         raise HTTPException(status_code=404, detail=f"Unknown probe category: {category}")
