@@ -1091,3 +1091,104 @@ class A2ANonceLog(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+# ── Sprint 28: HITL Enforcement Checkpoints + Cascading Failure Detection ──
+
+
+class ApprovalRequest(Base):
+    """Human-in-the-loop approval request created when policy triggers require_approval."""
+    __tablename__ = "approval_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    action_description: Mapped[str] = mapped_column(Text, default="")
+    risk_context: Mapped[str] = mapped_column(Text, default="{}")
+    risk_level: Mapped[str] = mapped_column(String(16), default="high")
+    risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    matched_patterns: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(
+        String(16), default="pending", index=True
+    )  # pending, approved, rejected, expired
+    fallback_action: Mapped[str] = mapped_column(String(16), default="block")  # auto-approve | block
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    decided_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    decision_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notification_channels: Mapped[str] = mapped_column(Text, default='["slack"]')
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    decided_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AgentBehavioralBaseline(Base):
+    """Per-agent behavioral baseline built over observation period."""
+    __tablename__ = "agent_behavioral_baselines"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    observation_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    observation_end: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_baseline_ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    tool_call_sequence_patterns: Mapped[str] = mapped_column(Text, default="{}")
+    avg_output_volume: Mapped[float] = mapped_column(Float, default=0.0)
+    std_output_volume: Mapped[float] = mapped_column(Float, default=0.0)
+    avg_api_call_frequency: Mapped[float] = mapped_column(Float, default=0.0)
+    std_api_call_frequency: Mapped[float] = mapped_column(Float, default=0.0)
+    total_observations: Mapped[int] = mapped_column(Integer, default=0)
+    baseline_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentBehavioralEvent(Base):
+    """Individual agent behavioral event for baseline computation."""
+    __tablename__ = "agent_behavioral_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)  # tool_call, api_call, output
+    tool_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class CascadingFailureEvent(Base):
+    """Recorded anomaly event from cascading failure detector."""
+    __tablename__ = "cascading_failure_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    anomaly_type: Mapped[str] = mapped_column(String(64))  # volume_spike, frequency_spike, pattern_deviation
+    deviation_score: Mapped[float] = mapped_column(Float, default=0.0)
+    circuit_breaker_state: Mapped[str] = mapped_column(
+        String(16), default="closed"
+    )  # closed, open, half_open
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
