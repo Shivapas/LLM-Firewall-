@@ -222,7 +222,7 @@ class MemoryIsolationEnforcer:
         perm = self._permissions.get((reader_agent_id, writer_agent_id))
         if perm:
             # If permission specifies namespaces, check namespace match
-            if perm.namespaces and namespace and namespace not in perm.namespaces:
+            if perm.namespaces and (not namespace or namespace not in perm.namespaces):
                 result = IsolationCheckResult(
                     request_id=str(uuid.uuid4()),
                     reader_agent_id=reader_agent_id,

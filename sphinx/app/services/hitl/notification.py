@@ -174,7 +174,7 @@ class EmailNotifier:
             msg["From"] = self.config.from_address
             msg["To"] = ", ".join(self.config.to_addresses)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._send_smtp, msg)
             logger.info("Email notification sent for approval %s", request.id)
             return True

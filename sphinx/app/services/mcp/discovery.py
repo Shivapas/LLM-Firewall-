@@ -93,6 +93,11 @@ async def introspect_mcp_server(
     Expects a JSON-RPC style response with tool definitions.
     Falls back to a simple GET /tools endpoint.
     """
+    # SSRF protection: validate URL before making request
+    from app.services.proxy import _validate_upstream_url
+    if not _validate_upstream_url(url):
+        raise ValueError(f"MCP server URL not allowed (SSRF protection): {url}")
+
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             # Try JSON-RPC tools/list method

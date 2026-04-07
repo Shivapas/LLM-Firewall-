@@ -157,6 +157,17 @@ class A2AInterceptor:
         ts = datetime.now(timezone.utc).isoformat()
 
         # 1. Validate sender agent identity (JWT token)
+        # Fail-closed: if security dependencies are not configured, reject all messages
+        if not self._token_issuer:
+            result = self._build_result(
+                msg_id, message, MessageAction.REJECTED_UNREGISTERED,
+                reason="A2A interceptor not configured: token issuer not available (fail-closed)",
+                token_valid=False, start=start, ts=ts,
+            )
+            self._stats["rejected"] += 1
+            self._record_audit(message, result)
+            return result
+
         token_valid = False
         if self._token_issuer:
             token_result = self._token_issuer.validate_token(

@@ -195,8 +195,23 @@ class MemoryLifecycleManager:
                 event.reason,
             )
 
-        # If still over cap after evicting everything, the entry itself is too large
-        # but we still add it (capped to max)
+        # Reject entries that exceed the cap on their own
+        if token_count > cap.max_tokens:
+            logger.warning(
+                "Memory entry rejected: agent=%s key=%s tokens=%d exceeds cap=%d",
+                agent_id, content_key, token_count, cap.max_tokens,
+            )
+            rejected_entry = MemoryEntry(
+                entry_id=str(uuid.uuid4()),
+                agent_id=agent_id,
+                content_key=content_key,
+                namespace=namespace,
+                token_count=token_count,
+                content_hash=content_hash,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            return rejected_entry, evictions  # Return without adding to store
+
         entry = MemoryEntry(
             entry_id=str(uuid.uuid4()),
             agent_id=agent_id,

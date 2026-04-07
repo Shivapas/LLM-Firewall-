@@ -58,7 +58,7 @@ class NonceStore:
 
     def mark_used(self, nonce: str, timestamp: Optional[float] = None):
         """Mark a nonce as used."""
-        self._nonces[nonce] = timestamp or time.time()
+        self._nonces[nonce] = timestamp if timestamp is not None else time.time()
 
     def _evict_expired(self):
         """Remove nonces older than the TTL."""
@@ -97,10 +97,13 @@ class MessageSignatureVerifier:
         self._signing_secrets.pop(agent_id, None)
 
     def compute_signature(self, message) -> str:
-        """Compute the expected HMAC-SHA256 signature for a message."""
-        secret = self._signing_secrets.get(message.sender_agent_id, "")
+        """Compute the expected HMAC-SHA256 signature for a message.
+
+        Raises ValueError if no signing secret is registered for the sender.
+        """
+        secret = self._signing_secrets.get(message.sender_agent_id)
         if not secret:
-            return ""
+            raise ValueError(f"No signing secret registered for agent {message.sender_agent_id}")
         components = SignatureComponents(
             sender_agent_id=message.sender_agent_id,
             receiver_agent_id=message.receiver_agent_id,
@@ -159,7 +162,15 @@ class MessageSignatureVerifier:
             }
 
         # Compute expected signature
-        expected = self.compute_signature(message)
+        try:
+            expected = self.compute_signature(message)
+        except ValueError:
+            self._stats["rejected_no_secret"] += 1
+            return {
+                "valid": False,
+                "nonce_valid": True,
+                "reason": f"Cannot compute signature for agent {sender}",
+            }
         if not hmac.compare_digest(message.signature, expected):
             self._stats["rejected_invalid"] += 1
             return {
