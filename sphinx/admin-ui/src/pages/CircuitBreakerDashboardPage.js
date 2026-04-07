@@ -164,7 +164,7 @@ export default function CircuitBreakerDashboardPage() {
         apiFetch('/admin/anomalies?limit=50').then(r => r.ok ? r.json() : []).catch(() => []),
         apiFetch('/admin/halt-events?limit=50').then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
-      setBreakers(Array.isArray(cbRes) ? cbRes : cbRes.breakers || []);
+      setBreakers(Array.isArray(cbRes) ? cbRes : cbRes.circuit_breakers || cbRes.breakers || []);
       setAnomalies(Array.isArray(anomalyRes) ? anomalyRes : anomalyRes.anomalies || []);
       setHaltEvents(Array.isArray(haltRes) ? haltRes : haltRes.events || []);
     } catch (err) {

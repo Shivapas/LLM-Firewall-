@@ -25,7 +25,7 @@ from app.services.hitl.anomaly_detector import get_anomaly_detector
 
 logger = logging.getLogger("sphinx.routers.hitl")
 
-router = APIRouter(tags=["hitl"])
+router = APIRouter(prefix="/admin", tags=["hitl"])
 
 
 # ── Request/Response Models ───────────────────────────────────────────
@@ -163,9 +163,9 @@ async def record_behavioral_event(agent_id: str, body: RecordEventRequest):
 # ── Circuit Breaker Endpoints ────────────────────────────────────────
 
 
-@router.get("/agents/{agent_id}/circuit-breaker")
-async def get_agent_circuit_breaker(agent_id: str):
-    """Get the circuit breaker state for an agent."""
+@router.get("/hitl/agents/{agent_id}/circuit-breaker")
+async def get_hitl_agent_circuit_breaker(agent_id: str):
+    """Get the HITL circuit breaker state for an agent."""
     detector = get_anomaly_detector()
     state = detector.get_circuit_state(agent_id)
     breakers = detector.get_all_breakers()
@@ -179,9 +179,9 @@ async def get_agent_circuit_breaker(agent_id: str):
     return breaker_info
 
 
-@router.post("/agents/{agent_id}/circuit-breaker")
-async def force_agent_circuit_breaker(agent_id: str, body: ForceCircuitBreakerRequest):
-    """Admin override: force an agent's circuit breaker state."""
+@router.post("/hitl/agents/{agent_id}/circuit-breaker")
+async def force_hitl_agent_circuit_breaker(agent_id: str, body: ForceCircuitBreakerRequest):
+    """Admin override: force an agent's HITL circuit breaker state."""
     valid_states = {"closed", "open", "half_open"}
     if body.state not in valid_states:
         raise HTTPException(
@@ -222,9 +222,9 @@ async def check_agent_behavior(agent_id: str, body: BehaviorCheckRequest):
 # ── Global Views ──────────────────────────────────────────────────────
 
 
-@router.get("/circuit-breakers")
-async def list_all_circuit_breakers():
-    """List all agent circuit breaker states."""
+@router.get("/hitl/circuit-breakers")
+async def list_all_hitl_circuit_breakers():
+    """List all agent HITL circuit breaker states."""
     detector = get_anomaly_detector()
     breakers = detector.get_all_breakers()
     return {
@@ -233,9 +233,9 @@ async def list_all_circuit_breakers():
     }
 
 
-@router.get("/anomalies")
-async def list_anomalies(limit: int = Query(100, ge=1, le=1000)):
-    """List recent anomaly events."""
+@router.get("/hitl/anomalies")
+async def list_hitl_anomalies(limit: int = Query(100, ge=1, le=1000)):
+    """List recent HITL anomaly events."""
     detector = get_anomaly_detector()
     history = detector.get_anomaly_history(limit=limit)
     return {

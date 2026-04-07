@@ -717,7 +717,7 @@ class TestHITLRouter:
 
     @pytest.mark.asyncio
     async def test_list_approvals_empty(self, client):
-        resp = await client.get("/approvals")
+        resp = await client.get("/admin/approvals")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 0
@@ -737,7 +737,7 @@ class TestHITLRouter:
         )
 
         # List pending
-        resp = await client.get("/approvals")
+        resp = await client.get("/admin/approvals")
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
 
@@ -755,7 +755,7 @@ class TestHITLRouter:
         assert resp.json()["status"] == "approved"
 
         # Should no longer be in pending
-        resp = await client.get("/approvals")
+        resp = await client.get("/admin/approvals")
         assert resp.json()["total"] == 0
 
     @pytest.mark.asyncio
@@ -800,7 +800,7 @@ class TestHITLRouter:
         # Record events
         for i in range(5):
             resp = await client.post(
-                "/agents/agent-1/events",
+                "/admin/agents/agent-1/events",
                 json={
                     "tenant_id": "t1",
                     "tool_calls": ["search", "read"],
@@ -811,20 +811,20 @@ class TestHITLRouter:
             assert resp.status_code == 200
 
         # Baseline not ready yet (observation period not elapsed)
-        resp = await client.get("/agents/agent-1/baseline")
+        resp = await client.get("/admin/agents/agent-1/baseline")
         assert resp.status_code == 200
         data = resp.json()
         assert data["is_ready"] is False
 
     @pytest.mark.asyncio
     async def test_get_baseline_nonexistent_404(self, client):
-        resp = await client.get("/agents/nonexistent/baseline")
+        resp = await client.get("/admin/agents/nonexistent/baseline")
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
     async def test_check_agent_behavior(self, client):
         resp = await client.post(
-            "/agents/agent-1/check",
+            "/admin/agents/agent-1/check",
             json={
                 "tool_calls": ["search", "read"],
                 "output_tokens": 100,
@@ -839,39 +839,39 @@ class TestHITLRouter:
     @pytest.mark.asyncio
     async def test_circuit_breaker_get_and_force(self, client):
         # Get default state
-        resp = await client.get("/agents/agent-1/circuit-breaker")
+        resp = await client.get("/admin/hitl/agents/agent-1/circuit-breaker")
         assert resp.status_code == 200
         assert resp.json()["state"] == "closed"
 
         # Force to open
         resp = await client.post(
-            "/agents/agent-1/circuit-breaker",
+            "/admin/hitl/agents/agent-1/circuit-breaker",
             json={"state": "open"},
         )
         assert resp.status_code == 200
         assert resp.json()["state"] == "open"
 
         # Verify
-        resp = await client.get("/agents/agent-1/circuit-breaker")
+        resp = await client.get("/admin/hitl/agents/agent-1/circuit-breaker")
         assert resp.json()["state"] == "open"
 
     @pytest.mark.asyncio
     async def test_force_invalid_state_400(self, client):
         resp = await client.post(
-            "/agents/agent-1/circuit-breaker",
+            "/admin/hitl/agents/agent-1/circuit-breaker",
             json={"state": "invalid"},
         )
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_list_all_circuit_breakers(self, client):
-        resp = await client.get("/circuit-breakers")
+        resp = await client.get("/admin/hitl/circuit-breakers")
         assert resp.status_code == 200
         assert "circuit_breakers" in resp.json()
 
     @pytest.mark.asyncio
     async def test_list_anomalies(self, client):
-        resp = await client.get("/anomalies")
+        resp = await client.get("/admin/hitl/anomalies")
         assert resp.status_code == 200
         assert "anomalies" in resp.json()
 

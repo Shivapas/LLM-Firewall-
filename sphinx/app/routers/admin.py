@@ -1417,15 +1417,15 @@ class IncidentInfo(BaseModel):
     created_at: Optional[datetime]
 
 
-@router.get("/incidents", response_model=list[IncidentInfo])
-async def list_incidents(
+@router.get("/vectordb-incidents", response_model=list[IncidentInfo])
+async def list_vectordb_incidents(
     tenant_id: Optional[str] = None,
     collection_name: Optional[str] = None,
     incident_type: Optional[str] = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
-    """List recorded incidents (indirect injection, sensitive field blocks, anomalies)."""
+    """List recorded VectorDB incidents (indirect injection, sensitive field blocks, anomalies)."""
     query = select(Incident).order_by(Incident.created_at.desc()).limit(min(limit, 200))
     if tenant_id:
         query = query.where(Incident.tenant_id == tenant_id)
@@ -1455,9 +1455,9 @@ async def list_incidents(
     ]
 
 
-@router.get("/incidents/{incident_id}", response_model=IncidentInfo)
-async def get_incident(incident_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Get a specific incident by ID."""
+@router.get("/vectordb-incidents/{incident_id}", response_model=IncidentInfo)
+async def get_vectordb_incident(incident_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Get a specific VectorDB incident by ID."""
     result = await db.execute(select(Incident).where(Incident.id == incident_id))
     incident = result.scalar_one_or_none()
     if incident is None:
@@ -2374,6 +2374,20 @@ async def list_agent_accounts():
     return [a.to_dict() for a in svc.list_accounts()]
 
 
+@router.get("/agents/risk-scores")
+async def get_all_agent_risk_scores():
+    """Get risk scores for all agents."""
+    from app.services.mcp.agent_risk_score import get_agent_risk_score_service
+    from app.services.mcp.agent_scope import get_agent_scope_service
+
+    scope_svc = get_agent_scope_service()
+    risk_svc = get_agent_risk_score_service()
+
+    agent_ids = [a.agent_id for a in scope_svc.list_accounts()]
+    results = risk_svc.recompute_all(agent_ids)
+    return {agent_id: bd.to_dict() for agent_id, bd in results.items()}
+
+
 @router.get("/agents/{agent_id}")
 async def get_agent_account(agent_id: str):
     """Get a specific agent service account."""
@@ -2465,6 +2479,64 @@ async def get_agent_violation_counts(agent_id: str):
 
     svc = get_agent_scope_service()
     return svc.get_violation_counts(agent_id=agent_id)
+
+
+# ── Sprint 28: HITL Agent Circuit Breaker & Anomaly Admin Endpoints ─────
+
+
+class AgentCircuitBreakerForceRequest(BaseModel):
+    state: str  # closed, open, half_open
+
+
+@router.post("/agents/{agent_id}/circuit-breaker")
+async def force_agent_circuit_breaker_admin(agent_id: str, body: AgentCircuitBreakerForceRequest):
+    """Admin override: force an agent's HITL circuit breaker state."""
+    from app.services.hitl.anomaly_detector import get_anomaly_detector
+
+    valid_states = {"closed", "open", "half_open"}
+    if body.state not in valid_states:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid state. Must be one of: {valid_states}",
+        )
+    detector = get_anomaly_detector()
+    detector.force_circuit_state(agent_id, body.state)
+    return {
+        "agent_id": agent_id,
+        "state": body.state,
+        "message": f"Circuit breaker forced to {body.state}",
+    }
+
+
+@router.get("/anomalies")
+async def list_agent_anomalies(limit: int = 100):
+    """List recent agent behavioral anomaly events."""
+    from app.services.hitl.anomaly_detector import get_anomaly_detector
+
+    detector = get_anomaly_detector()
+    history = detector.get_anomaly_history(limit=limit)
+    return {
+        "anomalies": history,
+        "total": len(history),
+    }
+
+
+@router.get("/halt-events")
+async def list_halt_events(limit: int = 100):
+    """List downstream halt events triggered by open circuit breakers."""
+    from app.services.hitl.anomaly_detector import get_anomaly_detector
+
+    detector = get_anomaly_detector()
+    # Halt events are anomalies that resulted in an open circuit breaker
+    history = detector.get_anomaly_history(limit=limit)
+    halt_events = [
+        e for e in history
+        if e.get("circuit_breaker_state") == "open"
+    ]
+    return {
+        "events": halt_events,
+        "total": len(halt_events),
+    }
 
 
 # ── Sprint 17: MCP Guardrails Dashboard & Compliance Tagging ────────────
@@ -2633,20 +2705,6 @@ async def get_agent_risk_score(agent_id: str):
     svc = get_agent_risk_score_service()
     breakdown = svc.compute_risk_score(agent_id)
     return breakdown.to_dict()
-
-
-@router.get("/agents/risk-scores")
-async def get_all_agent_risk_scores():
-    """Get risk scores for all agents."""
-    from app.services.mcp.agent_risk_score import get_agent_risk_score_service
-    from app.services.mcp.agent_scope import get_agent_scope_service
-
-    scope_svc = get_agent_scope_service()
-    risk_svc = get_agent_risk_score_service()
-
-    agent_ids = [a.agent_id for a in scope_svc.list_accounts()]
-    results = risk_svc.recompute_all(agent_ids)
-    return {agent_id: bd.to_dict() for agent_id, bd in results.items()}
 
 
 # ── Bulk Import Endpoints ────────────────────────────────────────────────
@@ -2910,7 +2968,7 @@ class UpdateIncidentBody(BaseModel):
 
 
 @router.post("/incidents")
-async def create_incident(body: CreateIncidentBody):
+async def create_security_incident(body: CreateIncidentBody):
     """Create a new security incident."""
     from app.services.dashboard.incident_manager import (
         get_incident_management_service,
@@ -2931,7 +2989,7 @@ async def create_incident(body: CreateIncidentBody):
 
 
 @router.get("/incidents")
-async def list_incidents(
+async def list_security_incidents(
     incident_type: Optional[str] = None,
     severity: Optional[str] = None,
     status: Optional[str] = None,
@@ -2952,7 +3010,7 @@ async def list_incidents(
 
 
 @router.get("/incidents/stats")
-async def get_incident_stats():
+async def get_security_incident_stats():
     """Get incident statistics."""
     from app.services.dashboard.incident_manager import get_incident_management_service
     svc = get_incident_management_service()
@@ -2961,7 +3019,7 @@ async def get_incident_stats():
 
 
 @router.get("/incidents/{incident_id}")
-async def get_incident(incident_id: str):
+async def get_security_incident(incident_id: str):
     """Get a specific incident."""
     from app.services.dashboard.incident_manager import get_incident_management_service
     svc = get_incident_management_service()
@@ -2972,7 +3030,7 @@ async def get_incident(incident_id: str):
 
 
 @router.patch("/incidents/{incident_id}")
-async def update_incident(incident_id: str, body: UpdateIncidentBody):
+async def update_security_incident(incident_id: str, body: UpdateIncidentBody):
     """Update a security incident (status, assignment, resolution)."""
     from app.services.dashboard.incident_manager import (
         get_incident_management_service,
