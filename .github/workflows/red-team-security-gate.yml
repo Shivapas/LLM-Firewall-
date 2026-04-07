@@ -1,0 +1,135 @@
+# Sprint 24B — Red Team Security-Gated CI/CD Pipeline
+#
+# Reference GitHub Actions workflow that integrates the Sphinx Red Team API
+# into the deployment pipeline. Triggers a red team campaign against a
+# staging endpoint and fails the build if Critical findings are detected.
+#
+# Usage:
+#   1. Set SPHINX_GATEWAY_URL secret to your Sphinx gateway base URL
+#   2. Set SPHINX_API_KEY secret to a valid API key with red-team permissions
+#   3. Set TARGET_ENDPOINT secret to the AI application endpoint under test
+
+name: Red Team Security Gate
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Target AI endpoint URL"
+        required: false
+        default: ""
+      fail_on_high:
+        description: "Fail build on High findings"
+        required: false
+        default: "false"
+
+env:
+  SPHINX_BASE_URL: ${{ secrets.SPHINX_GATEWAY_URL || 'http://localhost:8000' }}
+  SPHINX_API_KEY: ${{ secrets.SPHINX_API_KEY || 'test-key' }}
+  TARGET_URL: ${{ github.event.inputs.target_url || secrets.TARGET_ENDPOINT || 'http://localhost:9000/v1/chat/completions' }}
+
+jobs:
+  red-team-scan:
+    name: Red Team Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Trigger Red Team Campaign
+        id: trigger
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "${SPHINX_BASE_URL}/admin/red-team/cicd/trigger" \
+            -H "Authorization: Bearer ${SPHINX_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "target_url": "'"${TARGET_URL}"'",
+              "name": "CI/CD Gate — ${{ github.sha }}",
+              "probe_categories": ["injection", "jailbreak", "pii_extraction", "tool_call_injection", "memory_poisoning", "privilege_escalation", "multi_step_attack"],
+              "concurrency": 15,
+              "timeout_seconds": 30,
+              "created_by": "github-actions/${{ github.repository }}",
+              "wait": false,
+              "fail_on_critical": true,
+              "fail_on_high": ${{ github.event.inputs.fail_on_high || 'false' }}
+            }')
+
+          echo "Response: ${RESPONSE}"
+          CAMPAIGN_ID=$(echo "${RESPONSE}" | jq -r '.campaign_id')
+          echo "campaign_id=${CAMPAIGN_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Poll for Campaign Completion
+        id: poll
+        run: |
+          CAMPAIGN_ID="${{ steps.trigger.outputs.campaign_id }}"
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            STATUS_RESPONSE=$(curl -s \
+              "${SPHINX_BASE_URL}/admin/red-team/cicd/status/${CAMPAIGN_ID}" \
+              -H "Authorization: Bearer ${SPHINX_API_KEY}")
+
+            STATUS=$(echo "${STATUS_RESPONSE}" | jq -r '.status')
+            echo "Attempt ${ATTEMPT}: Campaign status = ${STATUS}"
+
+            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
+              echo "response=${STATUS_RESPONSE}" >> "$GITHUB_OUTPUT"
+              break
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 10
+          done
+
+          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+            echo "Campaign timed out after ${MAX_ATTEMPTS} attempts"
+            exit 1
+          fi
+
+      - name: Evaluate Build Verdict
+        id: verdict
+        run: |
+          CAMPAIGN_ID="${{ steps.trigger.outputs.campaign_id }}"
+          FAIL_ON_HIGH="${{ github.event.inputs.fail_on_high || 'false' }}"
+
+          VERDICT_RESPONSE=$(curl -s \
+            "${SPHINX_BASE_URL}/admin/red-team/cicd/verdict/${CAMPAIGN_ID}?fail_on_critical=true&fail_on_high=${FAIL_ON_HIGH}" \
+            -H "Authorization: Bearer ${SPHINX_API_KEY}")
+
+          echo "Verdict: ${VERDICT_RESPONSE}"
+
+          VERDICT=$(echo "${VERDICT_RESPONSE}" | jq -r '.verdict')
+          CRITICAL=$(echo "${VERDICT_RESPONSE}" | jq -r '.critical_count // 0')
+          HIGH=$(echo "${VERDICT_RESPONSE}" | jq -r '.high_count // 0')
+          TOTAL=$(echo "${VERDICT_RESPONSE}" | jq -r '.total_findings // 0')
+          MESSAGE=$(echo "${VERDICT_RESPONSE}" | jq -r '.message // "No message"')
+
+          echo "## Red Team Security Scan Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Verdict | **${VERDICT}** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Critical Findings | ${CRITICAL} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| High Findings | ${HIGH} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total Findings | ${TOTAL} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Message | ${MESSAGE} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Campaign ID: \`${CAMPAIGN_ID}\`" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$VERDICT" = "fail" ]; then
+            echo "::error::Red Team Security Gate FAILED: ${MESSAGE}"
+            exit 1
+          elif [ "$VERDICT" = "error" ]; then
+            echo "::error::Red Team campaign error: ${MESSAGE}"
+            exit 1
+          fi
+
+          echo "Red Team Security Gate PASSED"

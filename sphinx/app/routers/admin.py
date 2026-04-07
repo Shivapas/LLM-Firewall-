@@ -4136,3 +4136,249 @@ async def list_probes_by_category(category: str):
         raise HTTPException(status_code=404, detail=f"Unknown probe category: {category}")
     probes = suites[category]
     return {"category": category, "count": len(probes), "probes": probes}
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24B — Policy Recommendation Engine
+# ---------------------------------------------------------------------------
+
+
+@router.post("/red-team/campaigns/{campaign_id}/recommendations/generate")
+async def generate_policy_recommendations(campaign_id: str):
+    """Analyze probe results and generate policy rule recommendations."""
+    from app.services.red_team.runner import get_campaign, CampaignStatus
+    from app.services.red_team.policy_recommendation import (
+        generate_recommendations,
+        get_recommendations_for_campaign,
+    )
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.status != CampaignStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Campaign has not completed yet")
+    recommendations = generate_recommendations(campaign)
+    return {
+        "campaign_id": campaign_id,
+        "count": len(recommendations),
+        "recommendations": [r.to_dict() for r in recommendations],
+    }
+
+
+@router.get("/red-team/campaigns/{campaign_id}/recommendations")
+async def list_campaign_recommendations(campaign_id: str):
+    """List all policy recommendations for a campaign."""
+    from app.services.red_team.policy_recommendation import get_recommendations_for_campaign
+    recs = get_recommendations_for_campaign(campaign_id)
+    return {"campaign_id": campaign_id, "count": len(recs), "recommendations": recs}
+
+
+@router.post("/red-team/recommendations/{recommendation_id}/import")
+async def import_policy_recommendation(recommendation_id: str):
+    """One-click import: convert a recommendation into an active policy rule."""
+    from app.services.red_team.policy_recommendation import import_recommendation
+    rule = import_recommendation(recommendation_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    return {"status": "imported", "rule": rule}
+
+
+@router.post("/red-team/campaigns/{campaign_id}/recommendations/import-all")
+async def import_all_campaign_recommendations(campaign_id: str):
+    """Import all recommendations for a campaign as active policy rules."""
+    from app.services.red_team.policy_recommendation import import_all_recommendations
+    rules = import_all_recommendations(campaign_id)
+    return {"campaign_id": campaign_id, "imported_count": len(rules), "rules": rules}
+
+
+@router.get("/red-team/recommendations")
+async def list_all_policy_recommendations():
+    """List all policy recommendations across all campaigns."""
+    from app.services.red_team.policy_recommendation import list_all_recommendations
+    recs = list_all_recommendations()
+    return {"count": len(recs), "recommendations": recs}
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24B — Continuous Red Team Scheduling
+# ---------------------------------------------------------------------------
+
+
+class CreateRedTeamScheduleRequest(BaseModel):
+    name: str
+    target_url: str
+    probe_categories: list[str] = [
+        "injection", "jailbreak", "pii_extraction",
+        "tool_call_injection", "memory_poisoning",
+        "privilege_escalation", "multi_step_attack",
+    ]
+    concurrency: int = 10
+    timeout_seconds: int = 30
+    frequency: str = "daily"
+    created_by: str = "admin"
+
+
+@router.post("/red-team/schedules")
+async def create_red_team_schedule(body: CreateRedTeamScheduleRequest):
+    """Create a recurring red team campaign schedule."""
+    from app.services.red_team.scheduler import create_schedule
+    schedule = create_schedule(
+        name=body.name,
+        target_url=body.target_url,
+        probe_categories=body.probe_categories,
+        concurrency=body.concurrency,
+        timeout_seconds=body.timeout_seconds,
+        frequency=body.frequency,
+        created_by=body.created_by,
+    )
+    return schedule.to_dict()
+
+
+@router.get("/red-team/schedules")
+async def list_red_team_schedules():
+    """List all red team schedules."""
+    from app.services.red_team.scheduler import list_schedules
+    return list_schedules()
+
+
+@router.get("/red-team/schedules/{schedule_id}")
+async def get_red_team_schedule(schedule_id: str):
+    """Get a specific schedule."""
+    from app.services.red_team.scheduler import get_schedule
+    schedule = get_schedule(schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return schedule.to_dict()
+
+
+class UpdateRedTeamScheduleRequest(BaseModel):
+    frequency: Optional[str] = None
+    is_active: Optional[bool] = None
+    concurrency: Optional[int] = None
+    timeout_seconds: Optional[int] = None
+
+
+@router.patch("/red-team/schedules/{schedule_id}")
+async def update_red_team_schedule(schedule_id: str, body: UpdateRedTeamScheduleRequest):
+    """Update a schedule (frequency, active state, etc.)."""
+    from app.services.red_team.scheduler import update_schedule
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    schedule = update_schedule(schedule_id, **updates)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return schedule.to_dict()
+
+
+@router.delete("/red-team/schedules/{schedule_id}")
+async def delete_red_team_schedule(schedule_id: str):
+    """Delete a schedule."""
+    from app.services.red_team.scheduler import delete_schedule
+    if not delete_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"status": "deleted", "schedule_id": schedule_id}
+
+
+@router.post("/red-team/schedules/{schedule_id}/run")
+async def trigger_scheduled_campaign(schedule_id: str):
+    """Manually trigger a scheduled campaign immediately."""
+    import asyncio
+    from app.services.red_team.scheduler import get_schedule, execute_scheduled_campaign
+    schedule = get_schedule(schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    asyncio.ensure_future(execute_scheduled_campaign(schedule))
+    return {"status": "started", "schedule_id": schedule_id}
+
+
+@router.get("/red-team/alerts")
+async def list_regression_alerts(schedule_id: Optional[str] = None):
+    """List regression alerts, optionally filtered by schedule."""
+    from app.services.red_team.scheduler import list_alerts
+    alerts = list_alerts(schedule_id=schedule_id)
+    return {"count": len(alerts), "alerts": alerts}
+
+
+@router.post("/red-team/alerts/{alert_id}/acknowledge")
+async def acknowledge_regression_alert(alert_id: str):
+    """Acknowledge a regression alert."""
+    from app.services.red_team.scheduler import acknowledge_alert
+    if not acknowledge_alert(alert_id):
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"status": "acknowledged", "alert_id": alert_id}
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24B — Red Team CI/CD API
+# ---------------------------------------------------------------------------
+
+
+class TriggerCICDCampaignRequest(BaseModel):
+    target_url: str
+    name: Optional[str] = None
+    probe_categories: list[str] = [
+        "injection", "jailbreak", "pii_extraction",
+        "tool_call_injection", "memory_poisoning",
+        "privilege_escalation", "multi_step_attack",
+    ]
+    concurrency: int = 10
+    timeout_seconds: int = 30
+    created_by: str = "cicd"
+    wait: bool = False
+    fail_on_critical: bool = True
+    fail_on_high: bool = False
+    max_critical: int = 0
+    max_high: int = 0
+
+
+@router.post("/red-team/cicd/trigger")
+async def trigger_cicd_campaign(body: TriggerCICDCampaignRequest):
+    """Trigger a red team campaign for CI/CD integration.
+
+    If ``wait=True``, blocks until campaign completes and returns verdict.
+    Otherwise returns campaign ID for polling.
+    """
+    from app.services.red_team.cicd_api import trigger_cicd_campaign as _trigger
+    return await _trigger(
+        target_url=body.target_url,
+        name=body.name,
+        probe_categories=body.probe_categories,
+        concurrency=body.concurrency,
+        timeout_seconds=body.timeout_seconds,
+        created_by=body.created_by,
+        wait=body.wait,
+    )
+
+
+@router.get("/red-team/cicd/status/{campaign_id}")
+async def get_cicd_status(campaign_id: str):
+    """Poll campaign status and verdict for CI/CD integration."""
+    from app.services.red_team.cicd_api import get_cicd_status as _get_status
+    result = _get_status(campaign_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.get("/red-team/cicd/verdict/{campaign_id}")
+async def get_cicd_verdict(
+    campaign_id: str,
+    fail_on_critical: bool = True,
+    fail_on_high: bool = False,
+    max_critical: int = 0,
+    max_high: int = 0,
+):
+    """Get CI/CD build verdict for a completed campaign.
+
+    Returns pass/fail based on configurable thresholds.
+    """
+    from app.services.red_team.runner import get_campaign, CampaignStatus
+    from app.services.red_team.cicd_api import compute_build_verdict
+    campaign = get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return compute_build_verdict(
+        campaign,
+        fail_on_critical=fail_on_critical,
+        fail_on_high=fail_on_high,
+        max_critical=max_critical,
+        max_high=max_high,
+    )

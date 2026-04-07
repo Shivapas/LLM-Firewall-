@@ -884,3 +884,80 @@ class RedTeamProbeResult(Base):
     executed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24B — Red Team Policy Recommendations, Scheduling & CI/CD API
+# ---------------------------------------------------------------------------
+
+
+class RedTeamPolicyRecommendation(Base):
+    """Policy rule recommendation generated from red team probe findings."""
+    __tablename__ = "red_team_policy_recommendations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    category: Mapped[str] = mapped_column(String(64), index=True)
+    priority: Mapped[str] = mapped_column(String(16), default="high")
+    rule_name: Mapped[str] = mapped_column(String(256))
+    rule_type: Mapped[str] = mapped_column(String(64), default="block")
+    pattern: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    severity: Mapped[str] = mapped_column(String(16), default="high")
+    stage: Mapped[str] = mapped_column(String(64), default="input")
+    imported: Mapped[bool] = mapped_column(Boolean, default=False)
+    imported_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    imported_rule_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_probe_ids: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class RedTeamSchedule(Base):
+    """Recurring red team campaign schedule."""
+    __tablename__ = "red_team_schedules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(256), index=True)
+    target_url: Mapped[str] = mapped_column(String(1024))
+    probe_categories_json: Mapped[str] = mapped_column(
+        Text, default='["injection","jailbreak","pii_extraction"]'
+    )
+    concurrency: Mapped[int] = mapped_column(Integer, default=10)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    frequency: Mapped[str] = mapped_column(String(16), default="daily")  # daily, weekly
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_campaign_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), default="admin")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RedTeamRegressionAlert(Base):
+    """Alert raised when a scheduled campaign detects a new vulnerability."""
+    __tablename__ = "red_team_regression_alerts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    schedule_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    current_campaign_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    previous_campaign_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    new_vulnerability_probe_ids: Mapped[str] = mapped_column(Text, default="[]")
+    severity: Mapped[str] = mapped_column(String(16), default="high")
+    message: Mapped[str] = mapped_column(Text, default="")
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
