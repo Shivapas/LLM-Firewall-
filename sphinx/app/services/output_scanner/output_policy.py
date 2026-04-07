@@ -176,7 +176,7 @@ class OutputPolicyEvaluator:
 
         # If compliance tags indicate regulated data, escalate to incident log
         incident_logged = False
-        if compliance_tags and highest_action >= OutputAction.REDACT:
+        if compliance_tags and action_priority.get(highest_action, 0) >= action_priority[OutputAction.REDACT]:
             incident_logged = True
 
         reason_parts = []

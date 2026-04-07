@@ -98,10 +98,7 @@ async def activate_kill_switch(
         ks.error_message = error_message or "Model temporarily unavailable"
         ks.is_active = True
 
-    await db.commit()
-    await db.refresh(ks)
-
-    # Write immutable audit log
+    # Write immutable audit log in same transaction
     audit_entry = KillSwitchAuditLog(
         id=uuid.uuid4(),
         model_name=model_name,
@@ -112,7 +109,10 @@ async def activate_kill_switch(
         event_type="activated",
     )
     db.add(audit_entry)
+
+    # Single atomic commit for both kill-switch state and audit log
     await db.commit()
+    await db.refresh(ks)
 
     # Push to Redis cache and publish change notification
     data = _serialize_kill_switch(ks)
@@ -144,9 +144,8 @@ async def deactivate_kill_switch(db: AsyncSession, model_name: str) -> bool:
         return False
 
     ks.is_active = False
-    await db.commit()
 
-    # Write immutable audit log
+    # Write immutable audit log in same transaction
     audit_entry = KillSwitchAuditLog(
         id=uuid.uuid4(),
         model_name=model_name,
@@ -157,6 +156,8 @@ async def deactivate_kill_switch(db: AsyncSession, model_name: str) -> bool:
         event_type="deactivated",
     )
     db.add(audit_entry)
+
+    # Single atomic commit for both deactivation and audit log
     await db.commit()
 
     # Remove from cache and publish deactivation
@@ -205,7 +206,7 @@ async def get_kill_switch_audit_log(db: AsyncSession, model_name: Optional[str] 
 async def sync_kill_switches_to_cache(db: AsyncSession) -> int:
     """Load all active kill-switches from DB into Redis cache and local state. Returns count synced."""
     result = await db.execute(
-        select(KillSwitch).where(KillSwitch.is_active == True)
+        select(KillSwitch).where(KillSwitch.is_active.is_(True))
     )
     switches = result.scalars().all()
 
@@ -258,33 +259,47 @@ async def stop_kill_switch_subscriber() -> None:
 
 
 async def _kill_switch_subscriber_loop() -> None:
-    """Subscribe to Redis pub/sub and update local kill-switch state."""
-    try:
-        r = await get_redis()
-        pubsub = r.pubsub()
-        await pubsub.subscribe(PUBSUB_CHANNEL)
-        logger.info("Subscribed to channel=%s", PUBSUB_CHANNEL)
+    """Subscribe to Redis pub/sub and update local kill-switch state.
 
-        async for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
-            try:
-                payload = json.loads(message["data"])
-                model_name = payload["model_name"]
-                data = payload["data"]
+    Reconnects automatically on connection failures with exponential backoff.
+    """
+    backoff = 1
+    max_backoff = 30
 
-                if data.get("is_active", False):
-                    _local_kill_switch_state[model_name] = data
-                    logger.info("Pub/sub: kill-switch ACTIVATED model=%s", model_name)
-                else:
-                    _local_kill_switch_state.pop(model_name, None)
-                    logger.info("Pub/sub: kill-switch DEACTIVATED model=%s", model_name)
-            except Exception:
-                logger.warning("Failed to process pub/sub message", exc_info=True)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.error("Kill-switch subscriber loop error", exc_info=True)
+    while True:
+        try:
+            r = await get_redis()
+            pubsub = r.pubsub()
+            await pubsub.subscribe(PUBSUB_CHANNEL)
+            logger.info("Subscribed to channel=%s", PUBSUB_CHANNEL)
+            backoff = 1  # Reset backoff on successful connection
+
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    payload = json.loads(message["data"])
+                    model_name = payload["model_name"]
+                    data = payload["data"]
+
+                    if data.get("is_active", False):
+                        _local_kill_switch_state[model_name] = data
+                        logger.info("Pub/sub: kill-switch ACTIVATED model=%s", model_name)
+                    else:
+                        _local_kill_switch_state.pop(model_name, None)
+                        logger.info("Pub/sub: kill-switch DEACTIVATED model=%s", model_name)
+                except Exception:
+                    logger.warning("Failed to process pub/sub message", exc_info=True)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                "Kill-switch subscriber disconnected, reconnecting in %ds",
+                backoff, exc_info=True,
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
 
 
 def _serialize_kill_switch(ks: KillSwitch) -> dict:

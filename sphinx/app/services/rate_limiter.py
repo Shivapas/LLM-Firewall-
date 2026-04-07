@@ -2,6 +2,7 @@
 
 import logging
 import time
+import uuid
 
 from app.services.redis_client import get_redis
 
@@ -9,6 +10,46 @@ logger = logging.getLogger("sphinx.rate_limiter")
 
 # Sliding window duration in seconds
 WINDOW_SIZE = 60  # 1 minute for TPM (tokens per minute)
+
+# Lua script for atomic check-and-add with retry_after calculation
+_RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local token_count = tonumber(ARGV[4])
+local member = ARGV[5]
+
+-- Remove expired entries
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+
+-- Sum current usage: each member name is "timestamp:tokens:uuid", parse token part
+local members = redis.call('ZRANGE', key, 0, -1)
+local current_usage = 0
+for _, m in ipairs(members) do
+    local tokens = tonumber(string.match(m, ':(%d+):'))
+    if tokens then
+        current_usage = current_usage + tokens
+    end
+end
+
+-- Check if adding token_count would exceed limit
+if current_usage + token_count > limit then
+    -- Calculate retry_after from oldest entry
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    local retry_after = window
+    if #oldest >= 2 then
+        retry_after = math.max(1, math.ceil((tonumber(oldest[2]) + window) - now) + 1)
+    end
+    return {0, current_usage, retry_after}
+end
+
+-- Add this request
+redis.call('ZADD', key, now, member)
+redis.call('EXPIRE', key, window + 1)
+
+return {1, current_usage + token_count, 0}
+"""
 
 
 async def check_rate_limit(api_key_id: str, tpm_limit: int, token_count: int = 1) -> dict:
@@ -24,68 +65,18 @@ async def check_rate_limit(api_key_id: str, tpm_limit: int, token_count: int = 1
     now = time.time()
     window_key = f"ratelimit:{api_key_id}"
 
-    pipe = r.pipeline()
+    # Use a unique suffix to prevent member collisions in the sorted set
+    unique_id = uuid.uuid4().hex[:8]
+    member = f"{now}:{token_count}:{unique_id}"
 
-    # Remove entries outside the sliding window
-    pipe.zremrangebyscore(window_key, 0, now - WINDOW_SIZE)
-
-    # Get current token count in window
-    # Each member stores its token_count in the score-adjacent approach;
-    # we use ZRANGEBYSCORE to sum up. Instead, we store each request as a
-    # member with score=timestamp, and use a naming scheme that encodes token count.
-    # Simpler: store token_count as part of the member value, sum via Lua script.
-
-    await pipe.execute()
-
-    # Use Lua script for atomic check-and-add
-    lua_script = """
-    local key = KEYS[1]
-    local now = tonumber(ARGV[1])
-    local window = tonumber(ARGV[2])
-    local limit = tonumber(ARGV[3])
-    local token_count = tonumber(ARGV[4])
-    local member = ARGV[5]
-
-    -- Remove expired entries
-    redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
-
-    -- Sum current usage: each member name is "timestamp:tokens", parse token part
-    local members = redis.call('ZRANGE', key, 0, -1)
-    local current_usage = 0
-    for _, m in ipairs(members) do
-        local tokens = tonumber(string.match(m, ':(%d+)$'))
-        if tokens then
-            current_usage = current_usage + tokens
-        end
-    end
-
-    -- Check if adding token_count would exceed limit
-    if current_usage + token_count > limit then
-        return {0, current_usage, -1}
-    end
-
-    -- Add this request
-    redis.call('ZADD', key, now, member)
-    redis.call('EXPIRE', key, window + 1)
-
-    return {1, current_usage + token_count, 0}
-    """
-
-    member = f"{now}:{token_count}"
-    result = await r.eval(lua_script, 1, window_key, str(now), str(WINDOW_SIZE), str(tpm_limit), str(token_count), member)
+    result = await r.eval(
+        _RATE_LIMIT_LUA, 1, window_key,
+        str(now), str(WINDOW_SIZE), str(tpm_limit), str(token_count), member,
+    )
 
     allowed = bool(result[0])
     current_usage = int(result[1])
-
-    retry_after = None
-    if not allowed:
-        # Calculate when the oldest entry in the window expires
-        oldest = await r.zrange(window_key, 0, 0, withscores=True)
-        if oldest:
-            oldest_time = oldest[0][1]
-            retry_after = max(1, int((oldest_time + WINDOW_SIZE) - now) + 1)
-        else:
-            retry_after = WINDOW_SIZE
+    retry_after = int(result[2]) if not allowed else None
 
     if not allowed:
         logger.warning(
@@ -113,8 +104,9 @@ async def get_current_usage(api_key_id: str) -> int:
     members = await r.zrange(window_key, 0, -1)
     usage = 0
     for m in members:
-        parts = m.rsplit(":", 1)
-        if len(parts) == 2:
+        # Member format: "timestamp:token_count:uuid"
+        parts = m.split(":")
+        if len(parts) >= 2:
             try:
                 usage += int(parts[1])
             except ValueError:

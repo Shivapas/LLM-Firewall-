@@ -73,9 +73,33 @@ logging.basicConfig(
 )
 
 
+async def _shutdown_approval_svc():
+    svc = get_approval_workflow_service()
+    await svc.stop_expiry_monitor()
+
+
+async def _shutdown_alert_engine():
+    engine = get_alert_engine_service()
+    await engine.stop()
+
+
+async def _shutdown_health_failover():
+    probe = get_health_probe()
+    await probe.stop()
+    fe = get_failover_engine()
+    await fe.stop()
+
+
+async def _shutdown_audit():
+    writer = get_audit_writer()
+    await writer.close()
+    consumer = get_audit_consumer()
+    await consumer.stop()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: load policy cache, sync kill-switches, init providers, start audit
+    # ── Critical security services (must succeed or abort startup) ──
     try:
         async with async_session() as db:
             await load_policies(db)
@@ -95,60 +119,67 @@ async def lifespan(app: FastAPI):
 
         start_background_refresh(async_session)
 
-        # Initialize audit writer (Kafka producer)
-        audit_writer = get_audit_writer()
-        await audit_writer.initialize()
-
-        # Start audit consumer (Kafka -> Postgres)
-        audit_consumer = get_audit_consumer()
-        await audit_consumer.start(async_session)
-
-        # Initialize Tier 1 Threat Detection Engine
+        # Initialize Tier 1 Threat Detection Engine (CRITICAL)
         threat_engine = get_threat_engine()
         logger.info(
             "Threat detection engine initialized: %d patterns loaded",
             threat_engine.library.count(),
         )
 
-        # Load custom security rules from DB into threat engine
-        from app.models.api_key import SecurityRule
-        try:
-            async with async_session() as db:
-                from sqlalchemy import select
-                result = await db.execute(
-                    select(SecurityRule).where(SecurityRule.is_active == True)
-                )
-                custom_rules = result.scalars().all()
-                if custom_rules:
-                    import json as _json
-                    rule_dicts = [
-                        {
-                            "id": f"custom-{r.id}",
-                            "name": r.name,
-                            "category": r.category,
-                            "severity": r.severity,
-                            "pattern": r.pattern,
-                            "description": r.description,
-                            "tags": _json.loads(r.tags_json) if r.tags_json else [],
-                        }
-                        for r in custom_rules
-                    ]
-                    threat_engine.load_policy_rules(rule_dicts)
-                    logger.info("Loaded %d custom security rules from DB", len(custom_rules))
-        except Exception:
-            logger.warning("Failed to load custom security rules (table may not exist)", exc_info=True)
-
-        # Initialize Tier 2 ML semantic scanner
+        # Initialize Tier 2 ML semantic scanner (CRITICAL)
         tier2_scanner = get_tier2_scanner()
         logger.info(
             "Tier 2 semantic scanner initialized: %d threat embeddings in index",
             tier2_scanner.index_size,
         )
 
-        # Start kill-switch pub/sub subscriber for sub-5s propagation
+        # Start kill-switch pub/sub subscriber (CRITICAL)
         await start_kill_switch_subscriber()
+    except Exception:
+        logger.critical("CRITICAL: Core security services failed to initialize. Aborting startup.", exc_info=True)
+        raise
 
-        # Sprint 13: Initialize provider health monitoring & failover
+    # ── Audit system (important but non-fatal) ──
+    try:
+        audit_writer = get_audit_writer()
+        await audit_writer.initialize()
+
+        audit_consumer = get_audit_consumer()
+        await audit_consumer.start(async_session)
+    except Exception:
+        logger.error("Audit system failed to initialize — events may be lost", exc_info=True)
+
+    # ── Load custom security rules from DB ──
+    try:
+        from app.models.api_key import SecurityRule
+        from sqlalchemy import select
+        import json as _json
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(SecurityRule).where(SecurityRule.is_active.is_(True))
+            )
+            custom_rules = result.scalars().all()
+            if custom_rules:
+                rule_dicts = [
+                    {
+                        "id": f"custom-{r.id}",
+                        "name": r.name,
+                        "category": r.category,
+                        "severity": r.severity,
+                        "pattern": r.pattern,
+                        "description": r.description,
+                        "tags": _json.loads(r.tags_json) if r.tags_json else [],
+                    }
+                    for r in custom_rules
+                ]
+                threat_engine.load_policy_rules(rule_dicts)
+                logger.info("Loaded %d custom security rules from DB", len(custom_rules))
+    except Exception:
+        logger.warning("Failed to load custom security rules (table may not exist)", exc_info=True)
+
+    # ── Provider health monitoring & failover ──
+    try:
         async with async_session() as db:
             await sync_circuit_breakers_from_db(db)
 
@@ -157,72 +188,56 @@ async def lifespan(app: FastAPI):
 
         failover_engine = get_failover_engine(async_session)
         await failover_engine.start()
+    except Exception:
+        logger.error("Health probe / failover engine failed to start", exc_info=True)
 
-        # Sprint 15: Initialize MCP Discovery Service
+    # ── MCP, Agent Scope, Dashboard services ──
+    try:
         mcp_discovery = get_mcp_discovery_service(session_factory=async_session)
-        logger.info("MCP discovery service initialized")
-
-        # Sprint 16: Initialize Agent Scope Enforcement Service
         agent_scope = get_agent_scope_service(session_factory=async_session)
-        logger.info("Agent scope enforcement service initialized")
-
-        # Sprint 17: Initialize MCP Guardrails Dashboard & Compliance Tagging
         tool_call_audit = get_tool_call_audit_service(session_factory=async_session)
-        logger.info("Tool call audit service initialized")
-
         compliance_tagger = get_compliance_tagging_service()
-        logger.info("Compliance tagging service initialized")
-
         agent_risk_scorer = get_agent_risk_score_service(
             discovery_service=mcp_discovery,
             scope_service=agent_scope,
             audit_service=tool_call_audit,
         )
-        logger.info("Agent risk score service initialized")
-
         bulk_importer = get_bulk_import_service(scope_service=agent_scope)
-        logger.info("Bulk import service initialized")
-
         dashboard = get_guardrail_dashboard_service(
             scope_service=agent_scope,
             discovery_service=mcp_discovery,
             audit_service=tool_call_audit,
             risk_score_service=agent_risk_scorer,
         )
-        logger.info("MCP guardrails dashboard service initialized")
+        logger.info("MCP services initialized")
+    except Exception:
+        logger.warning("MCP services failed to initialize", exc_info=True)
 
-        # Sprint 18: Initialize Audit Trail Hardening & Compliance Reports
+    # ── Audit trail hardening & compliance ──
+    try:
         hash_chain = get_hash_chain_service(session_factory=async_session)
         await hash_chain.initialize()
-        logger.info("Audit hash chain service initialized")
-
         audit_query = get_audit_query_service(session_factory=async_session)
-        logger.info("Audit query service initialized")
-
         compliance_reports = get_compliance_report_service(session_factory=async_session)
-        logger.info("Compliance report service initialized")
+        logger.info("Audit hardening and compliance services initialized")
+    except Exception:
+        logger.warning("Audit hardening services failed to initialize", exc_info=True)
 
-        # Sprint 19: Enterprise Dashboard & Alerting
+    # ── Enterprise dashboard & alerting ──
+    try:
         sec_ops_dashboard = get_security_ops_dashboard(session_factory=async_session)
-        logger.info("Security operations dashboard initialized")
-
         policy_coverage = get_policy_coverage_service(session_factory=async_session)
-        logger.info("Policy coverage map service initialized")
-
         incident_mgr = get_incident_management_service(session_factory=async_session)
-        logger.info("Incident management service initialized")
-
         alert_engine = get_alert_engine_service(session_factory=async_session)
         await alert_engine.start(interval_seconds=30)
-        logger.info("Real-time alert engine started")
-
         tenant_dashboard = get_tenant_usage_dashboard(session_factory=async_session)
-        logger.info("Tenant usage dashboard initialized")
-
         onboarding = get_onboarding_wizard_service(session_factory=async_session)
-        logger.info("Onboarding wizard service initialized")
+        logger.info("Enterprise dashboard and alerting initialized")
+    except Exception:
+        logger.warning("Enterprise dashboard services failed to initialize", exc_info=True)
 
-        # Sprint 20: Performance profiling & GA checklist
+    # ── Performance profiling & GA checklist ──
+    try:
         memory_profiler = get_memory_profiler()
         cpu_profiler = get_cpu_profiler()
         regex_auditor = get_regex_auditor()
@@ -231,151 +246,103 @@ async def lifespan(app: FastAPI):
         cache_monitor.register_cache("threat_pattern_cache", max_size=500)
         cache_monitor.register_cache("pii_cache", max_size=200)
         ga_checklist = get_ga_checklist_service(session_factory=async_session)
-        logger.info("Sprint 20: Performance profiling and GA checklist initialized")
+        logger.info("Performance profiling and GA checklist initialized")
+    except Exception:
+        logger.warning("Performance profiling services failed to initialize", exc_info=True)
 
-        # Sprint 21: Multilingual Threat Detection + EU AI Act Controls
+    # ── Multilingual threat detection & EU AI Act ──
+    try:
         unicode_normalizer = get_unicode_normalizer()
-        logger.info("Unicode normalizer initialized: %d homoglyph mappings",
-                     unicode_normalizer.get_stats()["homoglyph_mappings"])
-
         multilingual_detector = get_multilingual_detector()
-        logger.info("Multilingual threat detector initialized: %d embeddings, %d languages",
-                     multilingual_detector.index_size, multilingual_detector.supported_language_count)
-
         language_router = get_language_router()
-        logger.info("Language detection and routing initialized")
-
         eu_ai_act = get_eu_ai_act_service()
-        logger.info("EU AI Act risk classification and transparency logging initialized")
+        logger.info("Multilingual and EU AI Act services initialized")
+    except Exception:
+        logger.warning("Multilingual services failed to initialize", exc_info=True)
 
-        # Sprint 24B: Start continuous red team scheduler
+    # ── Red team scheduler ──
+    try:
         start_scheduler()
         logger.info("Red team continuous scheduler started")
+    except Exception:
+        logger.warning("Red team scheduler failed to start", exc_info=True)
 
-        # Sprint 25: Initialize Agent Memory Store Firewall
+    # ── Memory firewall ──
+    try:
         memory_firewall_proxy = get_memory_store_proxy()
-        logger.info(
-            "Memory store firewall initialized: %d scanner patterns, default policy=%s",
-            memory_firewall_proxy.scanner.pattern_count,
-            memory_firewall_proxy.policy_store.default_policy.value,
-        )
-
-        # Sprint 26: Initialize Memory Read Controls + Lifecycle
         read_anomaly_detector = get_read_anomaly_detector()
-        logger.info("Memory read anomaly detector initialized: stale_threshold=%d days",
-                     read_anomaly_detector.stale_threshold_days)
-
         lifecycle_manager = get_memory_lifecycle_manager()
-        logger.info("Memory lifecycle cap manager initialized: default_max_tokens=%d",
-                     lifecycle_manager.default_max_tokens)
-
         integrity_verifier = get_memory_integrity_verifier()
-        logger.info("Memory integrity verifier initialized: %d records tracked",
-                     integrity_verifier.record_count())
-
         isolation_enforcer = get_memory_isolation_enforcer()
-        logger.info("Memory isolation enforcer initialized: %d permissions configured",
-                     isolation_enforcer.permission_count())
+        logger.info("Memory firewall services initialized")
+    except Exception:
+        logger.warning("Memory firewall services failed to initialize", exc_info=True)
 
-        # Sprint 28: HITL Enforcement Checkpoints + Cascading Failure Detection
+    # ── HITL approval workflow & anomaly detection ──
+    try:
         notification_svc = get_notification_service()
         approval_svc = get_approval_workflow_service(notification_service=notification_svc)
         await approval_svc.start_expiry_monitor(interval_seconds=10)
-        logger.info("HITL approval workflow initialized with expiry monitor")
-
         baseline_engine = get_baseline_engine()
-        logger.info("Agent behavioral baseline engine initialized: observation_period=%d days",
-                     baseline_engine.observation_days)
-
         anomaly_detector = get_anomaly_detector(baseline_engine=baseline_engine)
-        logger.info("Cascading failure anomaly detector initialized: threshold=%.1f, consecutive_to_open=%d",
-                     anomaly_detector.anomaly_threshold, anomaly_detector.consecutive_to_open)
+        logger.info("HITL and cascading failure detection initialized")
+    except Exception:
+        logger.warning("HITL services failed to initialize", exc_info=True)
 
-        # Sprint 29: Model Scanning + Multi-Turn Security + AI-SPM
+    # ── Model scanning, session security, AI-SPM ──
+    try:
         model_scanner = get_model_artifact_scanner()
-        logger.info("Model artifact scanner initialized: %d scans in history",
-                     len(model_scanner.get_scan_history()))
-
         model_registry = get_model_provenance_registry()
-        logger.info("Model provenance registry initialized: %d registrations",
-                     model_registry.registration_count())
-
         session_store = get_session_context_store()
-        logger.info("Session context store initialized: max_turns=%d, timeout=%ds",
-                     session_store.max_turns, int(session_store.inactivity_timeout.total_seconds()))
-
         cross_turn_risk = get_cross_turn_risk_accumulator()
-        logger.info("Cross-turn risk accumulator initialized: threshold=%.1f, action=%s",
-                     cross_turn_risk.escalation_threshold, cross_turn_risk.escalation_action)
-
         ai_spm = get_ai_spm_service()
-        logger.info("AI-SPM discovery service initialized: %d assets tracked",
-                     ai_spm.asset_count())
+        logger.info("Model scanning, session security, and AI-SPM initialized")
+    except Exception:
+        logger.warning("Model scanning services failed to initialize", exc_info=True)
 
-        # Sprint 30: Semantic Cache + Release Checklist
+    # ── Semantic cache & release checklist ──
+    try:
         semantic_cache = get_semantic_cache_layer()
-        logger.info("Semantic cache layer initialized: threshold=%.2f",
-                     semantic_cache.similarity_threshold)
-
         cache_security = get_cache_security_controller(cache=semantic_cache)
-        logger.info("Cache security controller initialized: %d poison patterns",
-                     len(cache_security._compiled_patterns))
-
         cache_audit = get_cache_audit_logger()
-        logger.info("Cache audit logger initialized")
-
         release_checklist = get_v2_release_checklist()
         release_checklist.initialize()
-        logger.info("v2.0 release checklist initialized: %d items",
-                     release_checklist.item_count())
-
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready, Sprint 25 memory firewall ready, Sprint 26 memory read controls & lifecycle ready, Sprint 28 HITL + cascading failure ready, Sprint 29 model scanner + session security + AI-SPM ready, Sprint 30 semantic cache + release checklist ready")
+        logger.info("Semantic cache and release checklist initialized")
     except Exception:
-        logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
+        logger.warning("Semantic cache services failed to initialize", exc_info=True)
+
+    logger.info("Startup complete: all security-critical services operational")
 
     yield
 
-    # Shutdown
-    # Stop Sprint 28 approval expiry monitor
+    # Shutdown — each block is independent to ensure all resources are released
+    logger.info("Shutting down...")
+
+    for shutdown_name, shutdown_coro in [
+        ("approval expiry monitor", _shutdown_approval_svc()),
+        ("alert engine", _shutdown_alert_engine()),
+        ("kill-switch subscriber", stop_kill_switch_subscriber()),
+        ("health probe / failover", _shutdown_health_failover()),
+        ("audit system", _shutdown_audit()),
+        ("redis", close_redis()),
+        ("http client", close_http_client()),
+    ]:
+        try:
+            await shutdown_coro
+        except Exception:
+            logger.warning("Error shutting down %s", shutdown_name, exc_info=True)
+
     try:
-        approval_svc = get_approval_workflow_service()
-        await approval_svc.stop_expiry_monitor()
+        stop_background_refresh()
     except Exception:
-        logger.warning("Error shutting down approval expiry monitor", exc_info=True)
+        logger.warning("Error stopping background refresh", exc_info=True)
 
-    # Stop Sprint 19 alert engine
     try:
-        alert_engine = get_alert_engine_service()
-        await alert_engine.stop()
+        stop_scheduler()
     except Exception:
-        logger.warning("Error shutting down alert engine", exc_info=True)
+        logger.warning("Error stopping red team scheduler", exc_info=True)
 
-    # Stop Sprint 24B red team scheduler
-    stop_scheduler()
-
-    await stop_kill_switch_subscriber()
-    stop_background_refresh()
-
-    # Stop Sprint 13 services
-    try:
-        health_probe = get_health_probe()
-        await health_probe.stop()
-        failover_engine = get_failover_engine()
-        await failover_engine.stop()
-    except Exception:
-        logger.warning("Error shutting down health probe / failover engine", exc_info=True)
-
-    # Close audit system
-    try:
-        audit_writer = get_audit_writer()
-        await audit_writer.close()
-        audit_consumer = get_audit_consumer()
-        await audit_consumer.stop()
-    except Exception:
-        logger.warning("Error shutting down audit system", exc_info=True)
-
-    await close_redis()
-    await close_http_client()
+    logger.info("Shutdown complete")
 
 
 app = FastAPI(

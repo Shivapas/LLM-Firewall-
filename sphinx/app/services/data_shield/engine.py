@@ -166,7 +166,7 @@ class DataShieldEngine:
 
     async def scan_parallel(self, text: str) -> list[PIIEntity]:
         """Run all three scanners in parallel using asyncio + thread pool."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         pii_future = loop.run_in_executor(_executor, self._pii.scan, text)
         phi_future = loop.run_in_executor(_executor, self._phi.scan, text)
@@ -275,33 +275,29 @@ class DataShieldEngine:
         original_text: str,
         redacted_text: str,
     ) -> dict:
-        """Apply redacted text back into the request payload."""
-        # Build a mapping of original -> redacted segments per message
+        """Apply redacted text back into the request payload.
+
+        Scans each message segment independently to avoid substring-matching bugs
+        where short messages could match inside longer ones.
+        """
         if "messages" in payload:
             for msg in payload["messages"]:
                 content = msg.get("content", "")
-                if isinstance(content, str) and content in original_text:
-                    # Find the redacted version of this content
-                    msg["content"] = self._redact_segment(content, original_text, redacted_text)
+                if isinstance(content, str) and content:
+                    msg["content"] = self._redact_segment(content)
         if "prompt" in payload:
             prompt = str(payload["prompt"])
-            if prompt in original_text:
-                payload["prompt"] = self._redact_segment(prompt, original_text, redacted_text)
+            if prompt:
+                payload["prompt"] = self._redact_segment(prompt)
         if "system" in payload and isinstance(payload["system"], str):
             system = payload["system"]
-            if system in original_text:
-                payload["system"] = self._redact_segment(system, original_text, redacted_text)
+            if system:
+                payload["system"] = self._redact_segment(system)
 
         return payload
 
-    def _redact_segment(self, segment: str, full_original: str, full_redacted: str) -> str:
-        """Extract the redacted version of a specific segment from the full redacted text."""
-        start_idx = full_original.find(segment)
-        if start_idx == -1:
-            return segment
-
-        # Calculate the offset difference from redactions before this segment
-        # Simple approach: re-scan and redact just this segment
+    def _redact_segment(self, segment: str) -> str:
+        """Scan and redact a single text segment independently."""
         entities = self.scan(segment)
         if entities:
             result = self._redactor.redact(segment, entities)

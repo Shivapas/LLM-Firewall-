@@ -45,9 +45,13 @@ async def validate_api_key(raw_key: str) -> Optional[dict]:
     if cached:
         data = json.loads(cached)
         if not data["is_active"]:
+            # Invalidate stale cache entry for revoked/inactive keys
+            await r.delete(f"apikey:{key_hash_val}")
             return None
         if data["expires_at"]:
             if datetime.fromisoformat(data["expires_at"]) < datetime.now(timezone.utc):
+                # Invalidate stale cache entry for expired keys
+                await r.delete(f"apikey:{key_hash_val}")
                 return None
         return data
 

@@ -112,9 +112,12 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 )
                 audit_action = "rerouted_kill_switch"
-                payload = json.loads(body)
-                payload["model"] = ks["fallback_model"]
-                body = json.dumps(payload).encode()
+                try:
+                    payload = json.loads(body)
+                    payload["model"] = ks["fallback_model"]
+                    body = json.dumps(payload).encode()
+                except (ValueError, TypeError):
+                    logger.warning("Failed to parse body for kill-switch reroute")
                 model_name = ks["fallback_model"]
 
                 # Log reroute event for audit
@@ -137,7 +140,7 @@ async def gateway_proxy(request: Request, path: str) -> Response:
 
     # ── RAG Pipeline Classification & Query Firewall ──
     rag_pipeline = get_rag_pipeline()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     rag_body, rag_result = await loop.run_in_executor(
         _scan_executor,
         lambda: rag_pipeline.process(body, tenant_id=tenant_id),
@@ -396,7 +399,7 @@ async def gateway_proxy(request: Request, path: str) -> Response:
             "Proxying request path=/v1/%s tenant=%s project=%s method=%s model=%s (default provider)",
             path, tenant_id, project_id, request.method, model_name or "unknown",
         )
-        response = await proxy_request(request, target_url, output_scan_context=output_scan_ctx)
+        response = await proxy_request(request, target_url, output_scan_context=output_scan_ctx, body_override=body)
 
     # ── Routing decision audit log ──
     if routing_decision and routing_decision.action != RoutingAction.DEFAULT:

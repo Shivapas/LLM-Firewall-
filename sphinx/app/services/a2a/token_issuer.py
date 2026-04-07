@@ -78,7 +78,12 @@ class AgentTokenIssuer:
     with header.payload.signature structure matching JWT conventions.
     """
 
-    def __init__(self, master_secret: str = "sphinx-a2a-master-secret"):
+    def __init__(self, master_secret: str = ""):
+        if not master_secret:
+            raise ValueError(
+                "A2A master_secret must be explicitly provided. "
+                "Do not use default/empty secrets in production."
+            )
         self._master_secret = master_secret
         self._registered_agents: dict[str, AgentRegistration] = {}
         self._revoked_jtis: set[str] = set()
@@ -138,7 +143,7 @@ class AgentTokenIssuer:
             raise ValueError(f"Agent {agent_id} is not registered or inactive")
 
         now = time.time()
-        jti = uuid.uuid4().hex[:16]
+        jti = uuid.uuid4().hex  # Full 128-bit UUID for JTI uniqueness
 
         header = {"alg": "HS256", "typ": "JWT"}
         payload = {
@@ -178,7 +183,9 @@ class AgentTokenIssuer:
             return {"valid": False, "reason": "Malformed token structure"}
 
         try:
-            payload_json = urlsafe_b64decode(parts[1] + "==")
+            # Proper base64 padding calculation
+            padded = parts[1] + "=" * (4 - len(parts[1]) % 4) if len(parts[1]) % 4 else parts[1]
+            payload_json = urlsafe_b64decode(padded)
             payload = json.loads(payload_json)
         except Exception:
             self._stats["tokens_rejected"] += 1
@@ -277,10 +284,13 @@ class AgentTokenIssuer:
 _issuer: Optional[AgentTokenIssuer] = None
 
 
-def get_token_issuer() -> AgentTokenIssuer:
+def get_token_issuer(master_secret: str = "") -> AgentTokenIssuer:
     global _issuer
     if _issuer is None:
-        _issuer = AgentTokenIssuer()
+        if not master_secret:
+            from app.config import get_settings
+            master_secret = get_settings().credential_encryption_key
+        _issuer = AgentTokenIssuer(master_secret=master_secret)
     return _issuer
 
 

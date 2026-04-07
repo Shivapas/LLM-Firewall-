@@ -162,6 +162,7 @@ class OutputScannerEngine:
         scan_result = OutputScanResult()
         start_time = time.perf_counter()
         all_entities: list[PIIEntity] = []
+        loop = asyncio.get_running_loop()
 
         # Accumulate full output text for final leakage check
         full_output_text = ""
@@ -182,7 +183,6 @@ class OutputScannerEngine:
             buffer.push(parsed)
 
             # Scan the buffered window text
-            loop = asyncio.get_event_loop()
             buffered_text = buffer.buffered_text
             redacted_text, entities = await loop.run_in_executor(
                 _executor, self.scan_text, buffered_text,

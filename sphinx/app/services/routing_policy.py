@@ -147,7 +147,12 @@ class RoutingPolicyEvaluator:
                 continue
 
             if self._matches_condition(rule, ctx):
-                decision.action = RoutingAction(rule.get("action", "route"))
+                try:
+                    decision.action = RoutingAction(rule.get("action", "route"))
+                except ValueError:
+                    logger.warning("Invalid routing action '%s' in rule '%s', skipping",
+                                   rule.get("action"), rule.get("name"))
+                    continue
                 decision.target_model = rule.get("target_model", ctx.model_name)
                 decision.target_provider = rule.get("target_provider", "")
                 decision.reason = f"Matched rule: {rule.get('name', 'unnamed')}"
@@ -201,8 +206,15 @@ class RoutingPolicyEvaluator:
             )
         return None
 
-    def _matches_condition(self, rule: dict, ctx: RoutingContext) -> bool:
+    # Maximum depth for recursive composite conditions (DoS protection)
+    MAX_COMPOSITE_DEPTH = 5
+
+    def _matches_condition(self, rule: dict, ctx: RoutingContext, _depth: int = 0) -> bool:
         """Check if a rule's condition matches the routing context."""
+        if _depth > self.MAX_COMPOSITE_DEPTH:
+            logger.warning("Routing rule exceeded max composite depth (%d), rejecting", self.MAX_COMPOSITE_DEPTH)
+            return False
+
         condition_type = rule.get("condition_type", "")
         try:
             condition = json.loads(rule.get("condition_json", "{}"))
@@ -218,7 +230,7 @@ class RoutingPolicyEvaluator:
         elif condition_type == "kill_switch":
             return self._match_kill_switch(condition, ctx)
         elif condition_type == "composite":
-            return self._match_composite(condition, ctx)
+            return self._match_composite(condition, ctx, _depth=_depth)
         return False
 
     def _match_sensitivity(self, condition: dict, ctx: RoutingContext) -> bool:
@@ -253,15 +265,18 @@ class RoutingPolicyEvaluator:
     def _match_kill_switch(self, condition: dict, ctx: RoutingContext) -> bool:
         return ctx.kill_switch_active
 
-    def _match_composite(self, condition: dict, ctx: RoutingContext) -> bool:
+    def _match_composite(self, condition: dict, ctx: RoutingContext, _depth: int = 0) -> bool:
         """Evaluate multiple sub-conditions with AND/OR logic."""
         operator = condition.get("operator", "and")
         sub_conditions = condition.get("conditions", [])
 
+        if not sub_conditions:
+            return False  # Empty conditions should not match
+
         results = []
         for sub in sub_conditions:
             sub_rule = {"condition_type": sub.get("type", ""), "condition_json": json.dumps(sub.get("condition", {}))}
-            results.append(self._matches_condition(sub_rule, ctx))
+            results.append(self._matches_condition(sub_rule, ctx, _depth=_depth + 1))
 
         if operator == "and":
             return all(results)

@@ -182,11 +182,13 @@ class AgentBehavioralBaselineEngine:
             agent_id=agent_id, tenant_id="", observation_start=datetime.now(timezone.utc),
             observation_end=None, is_ready=False,
         )).tenant_id
-        # Temporarily lower min_observations
-        original_min = self.min_observations
-        self.min_observations = 1
-        self._compute_baseline(agent_id, t_id)
-        self.min_observations = original_min
+        # Use a local override instead of mutating shared instance state
+        saved_min = self.min_observations
+        try:
+            self.min_observations = 1
+            self._compute_baseline(agent_id, t_id)
+        finally:
+            self.min_observations = saved_min
         return self._baselines.get(agent_id)
 
     def get_baseline(self, agent_id: str) -> Optional[AgentBaseline]:

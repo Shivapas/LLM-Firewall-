@@ -169,16 +169,18 @@ class CascadingFailureAnomalyDetector:
         # Update circuit breaker
         if is_anomalous:
             breaker.total_anomalies += 1
-            breaker.last_anomaly_at = now
 
-            # Check if within anomaly window
+            # Check if within anomaly window (compare BEFORE updating last_anomaly_at)
+            previous_anomaly_at = breaker.last_anomaly_at
             if breaker.consecutive_anomalies == 0 or (
-                breaker.last_anomaly_at
-                and (now - breaker.last_anomaly_at) <= self.anomaly_window
+                previous_anomaly_at is not None
+                and (now - previous_anomaly_at) <= self.anomaly_window
             ):
                 breaker.consecutive_anomalies += 1
             else:
                 breaker.consecutive_anomalies = 1
+
+            breaker.last_anomaly_at = now
 
             # Trip circuit breaker if threshold reached
             if breaker.consecutive_anomalies >= self.consecutive_to_open:
