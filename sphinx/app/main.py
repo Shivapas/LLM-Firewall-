@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin
+from app.routers import health, proxy, admin, memory_firewall
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -46,6 +46,7 @@ from app.services.multilingual.multilingual_detector import get_multilingual_det
 from app.services.multilingual.language_detector import get_language_router
 from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
 from app.services.red_team.scheduler import start_scheduler, stop_scheduler
+from app.services.memory_firewall.proxy import get_memory_store_proxy
 
 logger = logging.getLogger("sphinx.main")
 
@@ -234,6 +235,14 @@ async def lifespan(app: FastAPI):
         start_scheduler()
         logger.info("Red team continuous scheduler started")
 
+        # Sprint 25: Initialize Agent Memory Store Firewall
+        memory_firewall_proxy = get_memory_store_proxy()
+        logger.info(
+            "Memory store firewall initialized: %d scanner patterns, default policy=%s",
+            memory_firewall_proxy.scanner.pattern_count,
+            memory_firewall_proxy.policy_store.default_policy.value,
+        )
+
         logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
@@ -290,3 +299,4 @@ app.add_middleware(APIKeyAuthMiddleware)
 app.include_router(health.router)
 app.include_router(proxy.router)
 app.include_router(admin.router)
+app.include_router(memory_firewall.router)
