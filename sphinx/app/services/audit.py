@@ -46,19 +46,17 @@ class AuditEvent(BaseModel):
     previous_hash: str = ""
     record_hash: str = ""
 
-    REQUIRED_FIELDS: list[str] = Field(
-        default=[
-            "timestamp", "request_hash", "tenant_id", "model",
-            "policy_version", "risk_score", "action_taken",
-            "enforcement_duration_ms",
-        ],
-        exclude=True,
-    )
+    # Class-level constant (not a Pydantic field)
+    _REQUIRED_FIELDS: list[str] = [
+        "timestamp", "request_hash", "tenant_id", "model",
+        "policy_version", "risk_score", "action_taken",
+        "enforcement_duration_ms",
+    ]
 
     def validate_required_fields(self) -> list[str]:
         """Return list of missing required fields."""
         missing = []
-        for field_name in self.REQUIRED_FIELDS:
+        for field_name in self._REQUIRED_FIELDS:
             val = getattr(self, field_name, None)
             if val is None or val == "":
                 missing.append(field_name)
@@ -75,6 +73,7 @@ class AuditEventWriter:
     """Async audit event writer that publishes to Kafka.
 
     Falls back to in-memory queue if Kafka is unavailable.
+    Implements hash chain for tamper-evident audit trail.
     """
 
     def __init__(self, kafka_bootstrap_servers: str = "localhost:9092", topic: str = "sphinx.audit.events"):
@@ -83,6 +82,7 @@ class AuditEventWriter:
         self._producer = None
         self._fallback_queue: asyncio.Queue[AuditEvent] = asyncio.Queue(maxsize=10000)
         self._initialized = False
+        self._previous_hash: str = "genesis"  # Hash chain seed
 
     async def initialize(self) -> None:
         """Initialize the Kafka producer."""
@@ -107,11 +107,22 @@ class AuditEventWriter:
             )
             self._initialized = False
 
+    def _compute_record_hash(self, event: AuditEvent) -> str:
+        """Compute SHA-256 hash of the event for the hash chain."""
+        data = f"{self._previous_hash}:{event.event_id}:{event.timestamp}:{event.tenant_id}:{event.request_hash}"
+        return hashlib.sha256(data.encode()).hexdigest()
+
     async def write_event(self, event: AuditEvent) -> bool:
         """Write an audit event asynchronously.
 
+        Populates hash chain fields before writing.
         Returns True if successfully sent to Kafka, False if queued in fallback.
         """
+        # Populate hash chain
+        event.previous_hash = self._previous_hash
+        event.record_hash = self._compute_record_hash(event)
+        self._previous_hash = event.record_hash
+
         event_dict = event.model_dump()
 
         if self._producer and self._initialized:
@@ -187,7 +198,7 @@ class AuditEventConsumer:
                 group_id=self._group_id,
                 value_deserializer=lambda v: json.loads(v.decode("utf-8")),
                 auto_offset_reset="earliest",
-                enable_auto_commit=True,
+                enable_auto_commit=False,  # Manual commits for at-least-once delivery
             )
             await self._consumer.start()
             self._running = True
@@ -208,6 +219,9 @@ class AuditEventConsumer:
                     for msg in messages:
                         event_data = msg.value
                         await self._persist_event(session_factory, event_data)
+                # Commit offsets only after successful persistence
+                if msg_batch:
+                    await self._consumer.commit()
             except Exception:
                 if self._running:
                     logger.exception("Error in audit consumer loop")
@@ -281,14 +295,22 @@ _audit_consumer: Optional[AuditEventConsumer] = None
 def get_audit_writer() -> AuditEventWriter:
     global _audit_writer
     if _audit_writer is None:
-        _audit_writer = AuditEventWriter()
+        from app.config import get_settings
+        settings = get_settings()
+        _audit_writer = AuditEventWriter(
+            kafka_bootstrap_servers=settings.kafka_bootstrap_servers,
+        )
     return _audit_writer
 
 
 def get_audit_consumer() -> AuditEventConsumer:
     global _audit_consumer
     if _audit_consumer is None:
-        _audit_consumer = AuditEventConsumer()
+        from app.config import get_settings
+        settings = get_settings()
+        _audit_consumer = AuditEventConsumer(
+            kafka_bootstrap_servers=settings.kafka_bootstrap_servers,
+        )
     return _audit_consumer
 
 

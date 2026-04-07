@@ -110,7 +110,21 @@ class EscalationGate:
             logger.info(
                 "Escalation gate: medium risk with no pattern matches — escalating to Tier 2",
             )
-            tier2_result = self.tier2_scanner.scan(text)
+            try:
+                tier2_result = self.tier2_scanner.scan(text)
+            except Exception:
+                # Fail closed: if Tier 2 scanner fails, treat as high risk
+                logger.error("Tier 2 scanner failed — failing closed (blocking)", exc_info=True)
+                return EscalationDecision(
+                    escalated_to_tier2=True,
+                    reason="Tier 2 scanner error — failing closed",
+                    tier1_risk_level=risk_level,
+                    tier1_score=tier1_score.score,
+                    tier1_match_count=match_count,
+                    final_action="block",
+                    final_risk_level="high",
+                    final_score=tier1_score.score,
+                )
 
             # Use the higher of Tier 1 and Tier 2 scores
             final_score = max(tier1_score.score, tier2_result.score)

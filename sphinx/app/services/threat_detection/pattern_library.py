@@ -13,6 +13,24 @@ logger = logging.getLogger("sphinx.threat_detection.patterns")
 DEFAULT_PATTERNS_PATH = Path(__file__).parent.parent.parent.parent / "config" / "threat_patterns.yaml"
 
 
+
+
+# Maximum time in seconds for a single regex match (ReDoS protection)
+_REGEX_MATCH_TIMEOUT_SECONDS = 1.0
+
+
+def _validate_regex_safety(pattern: str) -> None:
+    """Basic check for potentially catastrophic backtracking patterns.
+
+    Raises ValueError for patterns with known dangerous constructs.
+    """
+    # Detect nested quantifiers like (a+)+, (a*)+, (a+)*, etc.
+    import re as _re
+    dangerous = _re.compile(r'\([^)]*[+*]\)[+*]')
+    if dangerous.search(pattern):
+        raise ValueError(f"Potentially catastrophic regex pattern detected (nested quantifiers): {pattern[:100]}")
+
+
 class ThreatPattern:
     """A compiled threat detection pattern."""
 
@@ -33,13 +51,19 @@ class ThreatPattern:
         self.category = category
         self.severity = severity
         self.pattern = pattern
+        _validate_regex_safety(pattern)
         self.regex = re.compile(pattern, re.IGNORECASE | re.DOTALL)
         self.description = description
         self.tags = tags or []
 
     def match(self, text: str) -> Optional[re.Match]:
-        """Test if pattern matches the given text. Returns the match object or None."""
-        return self.regex.search(text)
+        """Test if pattern matches the given text. Returns the match object or None.
+
+        Uses a length limit on input to mitigate ReDoS on complex patterns.
+        """
+        # Limit input length to prevent excessive backtracking
+        truncated = text[:100_000] if len(text) > 100_000 else text
+        return self.regex.search(truncated)
 
     def to_dict(self) -> dict:
         return {

@@ -78,7 +78,12 @@ class AgentTokenIssuer:
     with header.payload.signature structure matching JWT conventions.
     """
 
-    def __init__(self, master_secret: str = "sphinx-a2a-master-secret"):
+    def __init__(self, master_secret: str = ""):
+        if not master_secret:
+            raise ValueError(
+                "A2A master_secret must be explicitly provided. "
+                "Do not use default/empty secrets in production."
+            )
         self._master_secret = master_secret
         self._registered_agents: dict[str, AgentRegistration] = {}
         self._revoked_jtis: set[str] = set()
@@ -277,10 +282,13 @@ class AgentTokenIssuer:
 _issuer: Optional[AgentTokenIssuer] = None
 
 
-def get_token_issuer() -> AgentTokenIssuer:
+def get_token_issuer(master_secret: str = "") -> AgentTokenIssuer:
     global _issuer
     if _issuer is None:
-        _issuer = AgentTokenIssuer()
+        if not master_secret:
+            from app.config import get_settings
+            master_secret = get_settings().credential_encryption_key
+        _issuer = AgentTokenIssuer(master_secret=master_secret)
     return _issuer
 
 

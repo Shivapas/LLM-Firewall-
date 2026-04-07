@@ -113,8 +113,11 @@ class ThreatDetectionEngine:
         try:
             payload = json.loads(body)
         except (ValueError, TypeError):
+            # Fail closed: non-JSON bodies cannot be inspected, so block them
+            logger.warning("Non-JSON request body blocked by threat detection (cannot inspect)")
             return ActionResult(
-                action="allow", risk_level="low", score=0.0, reason="Non-JSON request body"
+                action="block", risk_level="medium", score=0.5,
+                reason="Non-JSON request body cannot be inspected for threats"
             )
 
         text = self._extract_prompt_text(payload)
@@ -141,8 +144,13 @@ class ThreatDetectionEngine:
         try:
             payload = json.loads(body)
         except (ValueError, TypeError):
+            # Fail closed: non-JSON bodies cannot be inspected
+            logger.warning("Non-JSON request body blocked by threat detection (cannot inspect)")
             return (
-                ActionResult(action="allow", risk_level="low", score=0.0, reason="Non-JSON request body"),
+                ActionResult(
+                    action="block", risk_level="medium", score=0.5,
+                    reason="Non-JSON request body cannot be inspected for threats"
+                ),
                 None,
             )
 
