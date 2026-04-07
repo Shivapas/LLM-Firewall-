@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -55,6 +55,15 @@ from app.services.hitl.approval_workflow import get_approval_workflow_service
 from app.services.hitl.notification import get_notification_service
 from app.services.hitl.baseline_engine import get_baseline_engine
 from app.services.hitl.anomaly_detector import get_anomaly_detector
+from app.services.model_scanner.artifact_scanner import get_model_artifact_scanner
+from app.services.model_scanner.provenance_registry import get_model_provenance_registry
+from app.services.session_security.context_store import get_session_context_store
+from app.services.session_security.cross_turn_risk import get_cross_turn_risk_accumulator
+from app.services.ai_spm.discovery import get_ai_spm_service
+from app.services.semantic_cache.cache_layer import get_semantic_cache_layer
+from app.services.semantic_cache.cache_security import get_cache_security_controller
+from app.services.semantic_cache.cache_audit import get_cache_audit_logger
+from app.services.release.v2_checklist import get_v2_release_checklist
 
 logger = logging.getLogger("sphinx.main")
 
@@ -282,7 +291,45 @@ async def lifespan(app: FastAPI):
         logger.info("Cascading failure anomaly detector initialized: threshold=%.1f, consecutive_to_open=%d",
                      anomaly_detector.anomaly_threshold, anomaly_detector.consecutive_to_open)
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready, Sprint 25 memory firewall ready, Sprint 26 memory read controls & lifecycle ready, Sprint 28 HITL + cascading failure ready")
+        # Sprint 29: Model Scanning + Multi-Turn Security + AI-SPM
+        model_scanner = get_model_artifact_scanner()
+        logger.info("Model artifact scanner initialized: %d scans in history",
+                     len(model_scanner.get_scan_history()))
+
+        model_registry = get_model_provenance_registry()
+        logger.info("Model provenance registry initialized: %d registrations",
+                     model_registry.registration_count())
+
+        session_store = get_session_context_store()
+        logger.info("Session context store initialized: max_turns=%d, timeout=%ds",
+                     session_store.max_turns, int(session_store.inactivity_timeout.total_seconds()))
+
+        cross_turn_risk = get_cross_turn_risk_accumulator()
+        logger.info("Cross-turn risk accumulator initialized: threshold=%.1f, action=%s",
+                     cross_turn_risk.escalation_threshold, cross_turn_risk.escalation_action)
+
+        ai_spm = get_ai_spm_service()
+        logger.info("AI-SPM discovery service initialized: %d assets tracked",
+                     ai_spm.asset_count())
+
+        # Sprint 30: Semantic Cache + Release Checklist
+        semantic_cache = get_semantic_cache_layer()
+        logger.info("Semantic cache layer initialized: threshold=%.2f",
+                     semantic_cache.similarity_threshold)
+
+        cache_security = get_cache_security_controller(cache=semantic_cache)
+        logger.info("Cache security controller initialized: %d poison patterns",
+                     len(cache_security._compiled_patterns))
+
+        cache_audit = get_cache_audit_logger()
+        logger.info("Cache audit logger initialized")
+
+        release_checklist = get_v2_release_checklist()
+        release_checklist.initialize()
+        logger.info("v2.0 release checklist initialized: %d items",
+                     release_checklist.item_count())
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready, Sprint 25 memory firewall ready, Sprint 26 memory read controls & lifecycle ready, Sprint 28 HITL + cascading failure ready, Sprint 29 model scanner + session security + AI-SPM ready, Sprint 30 semantic cache + release checklist ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
@@ -334,7 +381,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sphinx AI Mesh Firewall",
     description="Gateway proxy for LLM provider traffic with multi-provider routing and audit",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -348,3 +395,4 @@ app.include_router(admin.router)
 app.include_router(memory_firewall.router)
 app.include_router(a2a_firewall.router)
 app.include_router(hitl.router)
+app.include_router(model_security.router)
