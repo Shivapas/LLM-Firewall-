@@ -47,6 +47,10 @@ from app.services.multilingual.language_detector import get_language_router
 from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
 from app.services.red_team.scheduler import start_scheduler, stop_scheduler
 from app.services.memory_firewall.proxy import get_memory_store_proxy
+from app.services.memory_firewall.read_anomaly import get_read_anomaly_detector
+from app.services.memory_firewall.lifecycle import get_memory_lifecycle_manager
+from app.services.memory_firewall.integrity import get_memory_integrity_verifier
+from app.services.memory_firewall.isolation import get_memory_isolation_enforcer
 
 logger = logging.getLogger("sphinx.main")
 
@@ -243,7 +247,24 @@ async def lifespan(app: FastAPI):
             memory_firewall_proxy.policy_store.default_policy.value,
         )
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready")
+        # Sprint 26: Initialize Memory Read Controls + Lifecycle
+        read_anomaly_detector = get_read_anomaly_detector()
+        logger.info("Memory read anomaly detector initialized: stale_threshold=%d days",
+                     read_anomaly_detector.stale_threshold_days)
+
+        lifecycle_manager = get_memory_lifecycle_manager()
+        logger.info("Memory lifecycle cap manager initialized: default_max_tokens=%d",
+                     lifecycle_manager.default_max_tokens)
+
+        integrity_verifier = get_memory_integrity_verifier()
+        logger.info("Memory integrity verifier initialized: %d records tracked",
+                     integrity_verifier.record_count())
+
+        isolation_enforcer = get_memory_isolation_enforcer()
+        logger.info("Memory isolation enforcer initialized: %d permissions configured",
+                     isolation_enforcer.permission_count())
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready, Sprint 25 memory firewall ready, Sprint 26 memory read controls & lifecycle ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 

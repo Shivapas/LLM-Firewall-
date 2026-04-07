@@ -19,6 +19,7 @@ import IncidentManagementPage from './pages/IncidentManagementPage';
 import AlertManagementPage from './pages/AlertManagementPage';
 import OnboardingPage from './pages/OnboardingPage';
 import RedTeamPage from './pages/RedTeamPage';
+import MemoryStoreDashboardPage from './pages/MemoryStoreDashboardPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -60,6 +61,7 @@ export default function App() {
                         <Route path="alerts" element={<AlertManagementPage />} />
                         <Route path="onboarding" element={<OnboardingPage />} />
                         <Route path="red-team" element={<RedTeamPage />} />
+                        <Route path="memory-store" element={<MemoryStoreDashboardPage />} />
                     </Route>
                 </Routes>
             </BrowserRouter>
