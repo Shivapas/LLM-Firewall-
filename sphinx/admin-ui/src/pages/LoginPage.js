@@ -37,8 +37,20 @@ export default function LoginPage() {
             setError('API token is required');
             return;
         }
-        login(token.trim());
-        navigate('/');
+        try {
+            const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+            const res = await fetch(`${API_URL}/admin/keys`, {
+                headers: { Authorization: `Bearer ${token.trim()}` },
+            });
+            if (res.status === 401 || res.status === 403) {
+                setError('Invalid API token');
+                return;
+            }
+            login(token.trim());
+            navigate('/');
+        } catch {
+            setError('Unable to reach the gateway. Check your connection.');
+        }
     };
 
     return (

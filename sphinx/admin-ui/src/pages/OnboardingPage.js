@@ -1,6 +1,5 @@
 import React, { useState, useCallback } from 'react';
-
-const API = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 800, margin: '0 auto' },
@@ -48,13 +47,14 @@ const styles = {
 };
 
 export default function OnboardingPage() {
+    const { apiFetch } = useAuth();
     const [tenantId, setTenantId] = useState('');
     const [status, setStatus] = useState(null);
 
     const fetchStatus = useCallback(async () => {
         if (!tenantId) return;
         try {
-            const res = await fetch(`${API}/admin/onboarding/${tenantId}`);
+            const res = await apiFetch(`/admin/onboarding/${tenantId}`);
             setStatus(await res.json());
         } catch (e) { console.error(e); }
     }, [tenantId]);
@@ -62,7 +62,7 @@ export default function OnboardingPage() {
     const autoDetect = async () => {
         if (!tenantId) return;
         try {
-            const res = await fetch(`${API}/admin/onboarding/${tenantId}/auto-detect`, { method: 'POST' });
+            const res = await apiFetch(`/admin/onboarding/${tenantId}/auto-detect`, { method: 'POST' });
             setStatus(await res.json());
         } catch (e) { console.error(e); }
     };
@@ -70,8 +70,8 @@ export default function OnboardingPage() {
     const completeStep = async (stepKey) => {
         if (!tenantId) return;
         try {
-            const res = await fetch(`${API}/admin/onboarding/${tenantId}/complete-step`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
+            const res = await apiFetch(`/admin/onboarding/${tenantId}/complete-step`, {
+                method: 'POST',
                 body: JSON.stringify({ step_key: stepKey }),
             });
             setStatus(await res.json());
@@ -81,7 +81,7 @@ export default function OnboardingPage() {
     const resetProgress = async () => {
         if (!tenantId) return;
         try {
-            const res = await fetch(`${API}/admin/onboarding/${tenantId}/reset`, { method: 'POST' });
+            const res = await apiFetch(`/admin/onboarding/${tenantId}/reset`, { method: 'POST' });
             setStatus(await res.json());
         } catch (e) { console.error(e); }
     };

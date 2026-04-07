@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API_BASE = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 1200, margin: '0 auto' },
@@ -49,6 +48,7 @@ const PROVIDER_COLORS = { chromadb: '#4fc3f7', pinecone: '#81c784', milvus: '#ba
 const ACTION_COLORS = { deny: '#e74c3c', allow: '#27ae60', monitor: '#f39c12' };
 
 export default function VectorDBDashboardPage() {
+    const { apiFetch } = useAuth();
     const [dashboard, setDashboard] = useState(null);
     const [auditEntries, setAuditEntries] = useState([]);
     const [activeTab, setActiveTab] = useState('health');
@@ -57,7 +57,7 @@ export default function VectorDBDashboardPage() {
     const fetchDashboard = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/admin/vectordb-dashboard`);
+            const res = await apiFetch(`/admin/vectordb-dashboard`);
             if (res.ok) setDashboard(await res.json());
         } catch (e) { console.error('Failed to fetch dashboard', e); }
         setLoading(false);
@@ -65,7 +65,7 @@ export default function VectorDBDashboardPage() {
 
     const fetchAuditEntries = useCallback(async () => {
         try {
-            const res = await fetch(`${API_BASE}/admin/collection-audit?limit=50`);
+            const res = await apiFetch(`/admin/collection-audit?limit=50`);
             if (res.ok) setAuditEntries(await res.json());
         } catch (e) { console.error('Failed to fetch audit entries', e); }
     }, []);

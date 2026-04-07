@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     container: { maxWidth: 1100, margin: '0 auto' },
@@ -37,6 +38,7 @@ const styles = {
 };
 
 export default function AgentScopePage() {
+    const { apiFetch } = useAuth();
     const [agents, setAgents] = useState([]);
     const [selectedAgent, setSelectedAgent] = useState(null);
     const [violations, setViolations] = useState([]);
@@ -54,7 +56,7 @@ export default function AgentScopePage() {
 
     const fetchAgents = useCallback(async () => {
         try {
-            const res = await fetch('/admin/agents');
+            const res = await apiFetch('/admin/agents');
             if (res.ok) setAgents(await res.json());
         } catch (e) { console.error('Failed to fetch agents', e); }
     }, []);
@@ -65,9 +67,8 @@ export default function AgentScopePage() {
         if (!formAgentId) return;
         setLoading(true);
         try {
-            const res = await fetch('/admin/agents', {
+            const res = await apiFetch('/admin/agents', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     agent_id: formAgentId,
                     display_name: formDisplayName || formAgentId,
@@ -90,7 +91,7 @@ export default function AgentScopePage() {
     const deleteAgent = async (agentId) => {
         if (!window.confirm(`Delete agent "${agentId}"?`)) return;
         try {
-            await fetch(`/admin/agents/${agentId}`, { method: 'DELETE' });
+            await apiFetch(`/admin/agents/${agentId}`, { method: 'DELETE' });
             if (selectedAgent === agentId) { setSelectedAgent(null); setViolations([]); }
             fetchAgents();
         } catch (e) { console.error('Failed to delete agent', e); }
@@ -98,9 +99,8 @@ export default function AgentScopePage() {
 
     const toggleActive = async (agent) => {
         try {
-            await fetch(`/admin/agents/${agent.agent_id}`, {
+            await apiFetch(`/admin/agents/${agent.agent_id}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ is_active: !agent.is_active }),
             });
             fetchAgents();
@@ -111,8 +111,8 @@ export default function AgentScopePage() {
         setSelectedAgent(agentId);
         try {
             const [vRes, cRes] = await Promise.all([
-                fetch(`/admin/agents/${agentId}/violations?limit=50`),
-                fetch(`/admin/agents/${agentId}/violation-counts`),
+                apiFetch(`/admin/agents/${agentId}/violations?limit=50`),
+                apiFetch(`/admin/agents/${agentId}/violation-counts`),
             ]);
             if (vRes.ok) setViolations(await vRes.json());
             if (cRes.ok) setViolationCounts(await cRes.json());

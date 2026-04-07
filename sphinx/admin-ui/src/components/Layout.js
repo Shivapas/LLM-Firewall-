@@ -48,6 +48,8 @@ export default function Layout() {
                     <Link to="/alerts" style={styles.navLink(location.pathname === '/alerts')}>Alerts</Link>
                     <Link to="/onboarding" style={styles.navLink(location.pathname === '/onboarding')}>Onboarding</Link>
                     <Link to="/red-team" style={styles.navLink(location.pathname === '/red-team')}>Red Team</Link>
+                    <Link to="/memory-store" style={styles.navLink(location.pathname === '/memory-store')}>Memory Store</Link>
+                    <Link to="/circuit-breaker" style={styles.navLink(location.pathname === '/circuit-breaker')}>Circuit Breaker</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>

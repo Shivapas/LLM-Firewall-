@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 1100, margin: '0 auto' },
@@ -46,6 +45,7 @@ const sevColor = { critical: '#d32f2f', high: '#e65100', medium: '#f9a825', low:
 const statusColor = { open: '#d32f2f', investigating: '#e65100', resolved: '#2e7d32', dismissed: '#9e9e9e' };
 
 export default function IncidentManagementPage() {
+    const { apiFetch } = useAuth();
     const [incidents, setIncidents] = useState([]);
     const [stats, setStats] = useState(null);
     const [filters, setFilters] = useState({ status: '', severity: '', incident_type: '' });
@@ -58,37 +58,43 @@ export default function IncidentManagementPage() {
         if (filters.severity) params.set('severity', filters.severity);
         if (filters.incident_type) params.set('incident_type', filters.incident_type);
         try {
-            const res = await fetch(`${API}/admin/incidents?${params}`);
-            setIncidents(await res.json());
+            const res = await apiFetch(`/admin/incidents?${params}`);
+            if (res.ok) setIncidents(await res.json());
         } catch (e) { console.error(e); }
     }, [filters]);
 
     const fetchStats = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/admin/incidents/stats`);
-            setStats(await res.json());
+            const res = await apiFetch('/admin/incidents/stats');
+            if (res.ok) setStats(await res.json());
         } catch (e) { console.error(e); }
     }, []);
 
     useEffect(() => { fetchIncidents(); fetchStats(); }, [fetchIncidents, fetchStats]);
 
     const createIncident = async () => {
-        await fetch(`${API}/admin/incidents`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(form),
-        });
-        setShowCreate(false);
-        fetchIncidents();
-        fetchStats();
+        try {
+            const res = await apiFetch('/admin/incidents', {
+                method: 'POST',
+                body: JSON.stringify(form),
+            });
+            if (!res.ok) throw new Error('Failed to create incident');
+            setShowCreate(false);
+            fetchIncidents();
+            fetchStats();
+        } catch (e) { console.error(e); }
     };
 
     const updateStatus = async (id, newStatus) => {
-        await fetch(`${API}/admin/incidents/${id}`, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: newStatus }),
-        });
-        fetchIncidents();
-        fetchStats();
+        try {
+            const res = await apiFetch(`/admin/incidents/${id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: newStatus }),
+            });
+            if (!res.ok) throw new Error('Failed to update incident');
+            fetchIncidents();
+            fetchStats();
+        } catch (e) { console.error(e); }
     };
 
     return (

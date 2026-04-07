@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 1200, margin: '0 auto' },
@@ -39,6 +38,7 @@ const severityColor = {
 };
 
 export default function SecurityDashboardPage() {
+    const { apiFetch } = useAuth();
     const [data, setData] = useState(null);
     const [periodHours, setPeriodHours] = useState(24);
     const [loading, setLoading] = useState(true);
@@ -46,7 +46,8 @@ export default function SecurityDashboardPage() {
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API}/admin/dashboard/security-ops?period_hours=${periodHours}`);
+            const res = await apiFetch(`/admin/dashboard/security-ops?period_hours=${periodHours}`);
+            if (!res.ok) throw new Error('Failed to load security dashboard');
             setData(await res.json());
         } catch (e) { console.error(e); }
         setLoading(false);

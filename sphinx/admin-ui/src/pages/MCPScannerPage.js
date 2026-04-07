@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     container: { maxWidth: 1100, margin: '0 auto' },
@@ -38,6 +39,7 @@ const styles = {
 };
 
 export default function MCPScannerPage() {
+    const { apiFetch } = useAuth();
     const [servers, setServers] = useState([]);
     const [alerts, setAlerts] = useState([]);
     const [selectedServer, setSelectedServer] = useState(null);
@@ -48,14 +50,14 @@ export default function MCPScannerPage() {
 
     const fetchServers = useCallback(async () => {
         try {
-            const res = await fetch('/admin/mcp/servers');
+            const res = await apiFetch('/admin/mcp/servers');
             if (res.ok) setServers(await res.json());
         } catch (e) { console.error('Failed to fetch MCP servers', e); }
     }, []);
 
     const fetchAlerts = useCallback(async () => {
         try {
-            const res = await fetch('/admin/mcp/alerts');
+            const res = await apiFetch('/admin/mcp/alerts');
             if (res.ok) setAlerts(await res.json());
         } catch (e) { console.error('Failed to fetch alerts', e); }
     }, []);
@@ -65,9 +67,8 @@ export default function MCPScannerPage() {
     const handleDiscover = async (serverName, url) => {
         setLoading(true);
         try {
-            const res = await fetch('/admin/mcp/discover', {
+            const res = await apiFetch('/admin/mcp/discover', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ server_name: serverName, url }),
             });
             if (res.ok) { await fetchServers(); await fetchAlerts(); }
@@ -79,9 +80,8 @@ export default function MCPScannerPage() {
         e.preventDefault();
         if (!regName || !regUrl) return;
         try {
-            const res = await fetch('/admin/mcp/servers', {
+            const res = await apiFetch('/admin/mcp/servers', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ server_name: regName, url: regUrl }),
             });
             if (res.ok) { setRegName(''); setRegUrl(''); await fetchServers(); await fetchAlerts(); }
@@ -90,14 +90,14 @@ export default function MCPScannerPage() {
 
     const handleAcknowledge = async (alertId) => {
         try {
-            await fetch(`/admin/mcp/alerts/${alertId}/acknowledge`, { method: 'POST' });
+            await apiFetch(`/admin/mcp/alerts/${alertId}/acknowledge`, { method: 'POST' });
             await fetchAlerts();
         } catch (e) { console.error('Acknowledge failed', e); }
     };
 
     const handleMarkReviewed = async (serverName) => {
         try {
-            await fetch(`/admin/mcp/servers/${encodeURIComponent(serverName)}/review`, { method: 'POST' });
+            await apiFetch(`/admin/mcp/servers/${encodeURIComponent(serverName)}/review`, { method: 'POST' });
             await fetchServers();
         } catch (e) { console.error('Review failed', e); }
     };
@@ -105,7 +105,7 @@ export default function MCPScannerPage() {
     const handleSelectServer = async (serverName) => {
         setSelectedServer(serverName);
         try {
-            const res = await fetch(`/admin/mcp/servers/${encodeURIComponent(serverName)}/capabilities`);
+            const res = await apiFetch(`/admin/mcp/servers/${encodeURIComponent(serverName)}/capabilities`);
             if (res.ok) setCapabilities(await res.json());
         } catch (e) { console.error('Failed to fetch capabilities', e); }
     };

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../components/AuthContext';
 
 const CONDITION_TYPES = ['sensitivity', 'budget', 'compliance_tag', 'kill_switch', 'composite'];
 const ACTIONS = ['route', 'downgrade', 'block'];
-const API_BASE = process.env.REACT_APP_API_URL || '';
 
 function RoutingRulesPage() {
+  const { apiFetch } = useAuth();
   const [rules, setRules] = useState([]);
   const [tiers, setTiers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +41,7 @@ function RoutingRulesPage() {
   const fetchRules = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/admin/routing-rules`);
+      const res = await apiFetch(`/admin/routing-rules`);
       if (!res.ok) throw new Error('Failed to fetch routing rules');
       const data = await res.json();
       setRules(data.rules || []);
@@ -53,7 +54,7 @@ function RoutingRulesPage() {
 
   const fetchTiers = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/admin/budget-tiers`);
+      const res = await apiFetch(`/admin/budget-tiers`);
       if (!res.ok) throw new Error('Failed to fetch budget tiers');
       const data = await res.json();
       setTiers(data.tiers || []);
@@ -64,7 +65,7 @@ function RoutingRulesPage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/admin/routing-policy/status`);
+      const res = await apiFetch(`/admin/routing-policy/status`);
       if (res.ok) {
         setPolicyStatus(await res.json());
       }
@@ -100,11 +101,11 @@ function RoutingRulesPage() {
     try {
       const method = editingRule ? 'PUT' : 'POST';
       const url = editingRule
-        ? `${API_BASE}/admin/routing-rules/${editingRule.id}`
-        : `${API_BASE}/admin/routing-rules`;
-      const res = await fetch(url, {
+        ? `/admin/routing-rules/${editingRule.id}`
+        : `/admin/routing-rules`;
+      const res = await apiFetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+
         body: JSON.stringify(ruleForm),
       });
       if (!res.ok) {
@@ -140,7 +141,7 @@ function RoutingRulesPage() {
   const handleDeleteRule = async (ruleId) => {
     if (!window.confirm('Delete this routing rule?')) return;
     try {
-      const res = await fetch(`${API_BASE}/admin/routing-rules/${ruleId}`, {
+      const res = await apiFetch(`/admin/routing-rules/${ruleId}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete rule');
@@ -154,9 +155,9 @@ function RoutingRulesPage() {
   const handleCreateTier = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_BASE}/admin/budget-tiers`, {
+      const res = await apiFetch(`/admin/budget-tiers`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+
         body: JSON.stringify(tierForm),
       });
       if (!res.ok) {
@@ -182,7 +183,7 @@ function RoutingRulesPage() {
   const handleDeleteTier = async (tierId) => {
     if (!window.confirm('Delete this budget tier?')) return;
     try {
-      const res = await fetch(`${API_BASE}/admin/budget-tiers/${tierId}`, {
+      const res = await apiFetch(`/admin/budget-tiers/${tierId}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete tier');

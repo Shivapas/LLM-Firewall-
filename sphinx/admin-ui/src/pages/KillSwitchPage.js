@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 1100, margin: '0 auto' },
@@ -68,6 +67,7 @@ const styles = {
 };
 
 export default function KillSwitchPage() {
+    const { apiFetch } = useAuth();
     const [switches, setSwitches] = useState([]);
     const [auditLogs, setAuditLogs] = useState([]);
     const [activeTab, setActiveTab] = useState('switches');
@@ -85,14 +85,14 @@ export default function KillSwitchPage() {
 
     const fetchSwitches = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/admin/kill-switches`);
+            const res = await apiFetch(`/admin/kill-switches`);
             if (res.ok) setSwitches(await res.json());
         } catch (e) { setError('Failed to load kill-switches'); }
     }, []);
 
     const fetchAuditLogs = useCallback(async () => {
         try {
-            const res = await fetch(`${API}/admin/kill-switches/audit`);
+            const res = await apiFetch(`/admin/kill-switches/audit`);
             if (res.ok) setAuditLogs(await res.json());
         } catch (e) { setError('Failed to load audit logs'); }
     }, []);
@@ -121,9 +121,9 @@ export default function KillSwitchPage() {
             if (!payload.error_message) delete payload.error_message;
             if (!payload.fallback_model) payload.fallback_model = null;
 
-            const res = await fetch(`${API}/admin/kill-switches`, {
+            const res = await apiFetch(`/admin/kill-switches`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+
                 body: JSON.stringify(payload),
             });
 
@@ -145,7 +145,7 @@ export default function KillSwitchPage() {
         setError(''); setSuccess('');
 
         try {
-            const res = await fetch(`${API}/admin/kill-switches/${encodeURIComponent(modelName)}`, {
+            const res = await apiFetch(`/admin/kill-switches/${encodeURIComponent(modelName)}`, {
                 method: 'DELETE',
             });
             if (res.ok) {

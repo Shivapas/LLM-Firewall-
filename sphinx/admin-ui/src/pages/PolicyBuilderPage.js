@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../components/AuthContext';
 
 const CATEGORIES = [
   'prompt_injection',
@@ -15,9 +16,8 @@ const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 const ACTIONS = ['block', 'allow', 'rewrite', 'downgrade'];
 const STAGES = ['input', 'output', 'rag'];
 
-const API_BASE = process.env.REACT_APP_API_URL || '';
-
 function PolicyBuilderPage() {
+  const { apiFetch } = useAuth();
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -42,7 +42,7 @@ function PolicyBuilderPage() {
   const fetchRules = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/admin/security-rules`);
+      const res = await apiFetch('/admin/security-rules');
       if (!res.ok) throw new Error('Failed to fetch rules');
       const data = await res.json();
       setRules(data);
@@ -55,7 +55,7 @@ function PolicyBuilderPage() {
 
   const fetchEngineStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/admin/threat-engine/status`);
+      const res = await apiFetch('/admin/threat-engine/status');
       if (res.ok) {
         setEngineStatus(await res.json());
       }
@@ -98,15 +98,13 @@ function PolicyBuilderPage() {
     try {
       let res;
       if (editingRule) {
-        res = await fetch(`${API_BASE}/admin/security-rules/${editingRule}`, {
+        res = await apiFetch(`/admin/security-rules/${editingRule}`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
       } else {
-        res = await fetch(`${API_BASE}/admin/security-rules`, {
+        res = await apiFetch('/admin/security-rules', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
       }
@@ -143,7 +141,7 @@ function PolicyBuilderPage() {
   const handleDelete = async (ruleId) => {
     if (!window.confirm('Delete this security rule?')) return;
     try {
-      const res = await fetch(`${API_BASE}/admin/security-rules/${ruleId}`, {
+      const res = await apiFetch(`/admin/security-rules/${ruleId}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete rule');
@@ -156,9 +154,8 @@ function PolicyBuilderPage() {
 
   const handleToggleActive = async (rule) => {
     try {
-      const res = await fetch(`${API_BASE}/admin/security-rules/${rule.id}`, {
+      const res = await apiFetch(`/admin/security-rules/${rule.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_active: !rule.is_active }),
       });
       if (!res.ok) throw new Error('Failed to toggle rule');
@@ -171,9 +168,8 @@ function PolicyBuilderPage() {
   const handleTest = async () => {
     if (!testText.trim()) return;
     try {
-      const res = await fetch(`${API_BASE}/admin/threat-engine/scan`, {
+      const res = await apiFetch('/admin/threat-engine/scan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: testText }),
       });
       if (res.ok) {

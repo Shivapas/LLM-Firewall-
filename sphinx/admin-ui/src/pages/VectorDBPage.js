@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
-const API_BASE = process.env.REACT_APP_API_URL || '';
+import { useAuth } from '../components/AuthContext';
 
 const styles = {
     page: { maxWidth: 1000, margin: '0 auto' },
@@ -48,6 +47,7 @@ const ACTION_COLORS = { deny: '#e74c3c', allow: '#27ae60', monitor: '#f39c12' };
 const PROVIDER_COLORS = { chromadb: '#4fc3f7', pinecone: '#81c784', milvus: '#ba68c8' };
 
 export default function VectorDBPage() {
+    const { apiFetch } = useAuth();
     const [collections, setCollections] = useState([]);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
@@ -60,7 +60,7 @@ export default function VectorDBPage() {
 
     const fetchCollections = useCallback(async () => {
         try {
-            const res = await fetch(`${API_BASE}/admin/vector-collections`);
+            const res = await apiFetch(`/admin/vector-collections`);
             if (res.ok) setCollections(await res.json());
         } catch (e) { setError('Failed to fetch collections'); }
     }, []);
@@ -77,9 +77,8 @@ export default function VectorDBPage() {
                     ? form.sensitive_fields.split(',').map(s => s.trim()).filter(Boolean) : [],
                 max_results: parseInt(form.max_results, 10) || 10,
             };
-            const res = await fetch(`${API_BASE}/admin/vector-collections`, {
+            const res = await apiFetch(`/admin/vector-collections`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
             if (!res.ok) {
@@ -101,16 +100,15 @@ export default function VectorDBPage() {
     const handleDelete = async (id) => {
         if (!window.confirm('Delete this collection policy?')) return;
         try {
-            await fetch(`${API_BASE}/admin/vector-collections/${id}`, { method: 'DELETE' });
+            await apiFetch(`/admin/vector-collections/${id}`, { method: 'DELETE' });
             fetchCollections();
         } catch (e) { setError('Failed to delete'); }
     };
 
     const handleToggle = async (col) => {
         try {
-            await fetch(`${API_BASE}/admin/vector-collections/${col.id}`, {
+            await apiFetch(`/admin/vector-collections/${col.id}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ is_active: !col.is_active }),
             });
             fetchCollections();
