@@ -15,6 +15,10 @@ import httpx
 from .probes.injection import INJECTION_PROBES
 from .probes.jailbreak import JAILBREAK_PROBES
 from .probes.pii_extraction import PII_EXTRACTION_PROBES
+from .probes.tool_call_injection import TOOL_CALL_INJECTION_PROBES
+from .probes.memory_poisoning import MEMORY_POISONING_PROBES
+from .probes.privilege_escalation import PRIVILEGE_ESCALATION_PROBES
+from .probes.multi_step_attack import MULTI_STEP_ATTACK_PROBES
 
 
 class CampaignStatus(str, Enum):
@@ -96,7 +100,11 @@ class Campaign:
         self.name = name
         self.target_url = target_url
         self.description = description
-        self.probe_categories = probe_categories or ["injection", "jailbreak", "pii_extraction"]
+        self.probe_categories = probe_categories or [
+            "injection", "jailbreak", "pii_extraction",
+            "tool_call_injection", "memory_poisoning",
+            "privilege_escalation", "multi_step_attack",
+        ]
         self.concurrency = concurrency
         self.timeout_seconds = timeout_seconds
         self.created_by = created_by
@@ -209,6 +217,34 @@ class Campaign:
                 "recommendation": "Enable Data Shield PII/PHI detection on both input and output. "
                 "Configure output guardrails to block responses containing sensitive data.",
             })
+        if "tool_call_injection" in categories_found:
+            recs.append({
+                "category": "tool_call_injection",
+                "priority": "critical",
+                "recommendation": "Enforce a strict tool allowlist per agent session. Validate all "
+                "tool call parameters against schemas. Block hidden or encoded tool invocations.",
+            })
+        if "memory_poisoning" in categories_found:
+            recs.append({
+                "category": "memory_poisoning",
+                "priority": "critical",
+                "recommendation": "Scan all content written to agent memory for instruction-like patterns. "
+                "Enforce namespace isolation and apply content filtering on retrieved context.",
+            })
+        if "privilege_escalation" in categories_found:
+            recs.append({
+                "category": "privilege_escalation",
+                "priority": "critical",
+                "recommendation": "Enforce immutable role assignments from the control plane only. "
+                "Reject in-band privilege escalation requests and validate scope on every tool call.",
+            })
+        if "multi_step_attack" in categories_found:
+            recs.append({
+                "category": "multi_step_attack",
+                "priority": "critical",
+                "recommendation": "Deploy cross-turn behavioral analysis to detect multi-step attack chains. "
+                "Monitor for reconnaissance-then-exploit patterns and enforce cumulative risk scoring.",
+            })
         return recs
 
 
@@ -218,6 +254,10 @@ def _get_all_probes() -> dict[str, list[dict]]:
         "injection": INJECTION_PROBES,
         "jailbreak": JAILBREAK_PROBES,
         "pii_extraction": PII_EXTRACTION_PROBES,
+        "tool_call_injection": TOOL_CALL_INJECTION_PROBES,
+        "memory_poisoning": MEMORY_POISONING_PROBES,
+        "privilege_escalation": PRIVILEGE_ESCALATION_PROBES,
+        "multi_step_attack": MULTI_STEP_ATTACK_PROBES,
     }
 
 
