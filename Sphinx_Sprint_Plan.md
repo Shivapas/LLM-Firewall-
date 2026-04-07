@@ -448,18 +448,34 @@ Addresses the critical and high-priority competitive gaps identified in the enha
 
 - Findings report exportable as PDF from admin UI
 
-### Sprint 24 — Red Teaming: Agentic Probes + Policy Feedback Loop \[Weeks 47–48\]
+### Sprint 24A — Red Teaming: Agentic Probe Suite \[Weeks 47–48\]
+| **Task**                                  | **Description**                                                                                                                                                                       | **Points** |
+|-------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
+| Tool call injection probes                | Probes that inject malicious tool/function calls into agent workflows. Test whether the firewall detects unauthorized tool invocations, parameter tampering, and hidden tool calls.   | 5          |
+| Memory poisoning simulation probes        | Probes that simulate poisoned memory injection into agent long-term memory stores. Validate detection of instruction-like content planted for future retrieval and execution.         | 5          |
+| Privilege escalation via agent context probes | Probes that attempt to escalate agent permissions by manipulating agent context, role descriptions, or system instructions. Verify firewall blocks unauthorized scope expansion.   | 3          |
+| Multi-step attack chain probes            | Probes that execute multi-step attack sequences across consecutive agent turns — e.g., reconnaissance → injection → exfiltration. Validate detection of chained malicious behavior. | 5          |
+
+### Sprint 24A Acceptance Criteria
+- Tool call injection probes detect unauthorized tool invocations and parameter tampering in test scenarios
+
+- Memory poisoning probes identify instruction-like content planted in agent memory stores
+
+- Privilege escalation probes correctly flag unauthorized scope expansion attempts
+
+- Multi-step attack chain probes detect chained malicious behavior spanning multiple agent turns
+
+### Sprint 24B — Red Teaming: Policy Feedback Loop + API \[Weeks 49–50\]
 | **Task**                                | **Description**                                                                                                                                            | **Points** |
 |-----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|------------|
-| Agentic attack probe suite              | Probes targeting agentic applications: tool call injection, memory poisoning simulation, privilege escalation via agent context, multi-step attack chains. | 13         |
 | Red team → policy recommendation engine | Analyze probe results; generate recommended policy rules that would have blocked detected vulnerabilities. One-click policy import from recommendation.    | 8          |
 | Continuous red team scheduling          | Schedule recurring red team campaigns (daily/weekly). Alert on regression: new vulnerability detected that was not present in prior campaign.              | 5          |
 | Red team API                            | REST API for CI/CD integration: trigger campaign, poll results, fail build on Critical findings. Enables security-gated deployment pipelines.              | 5          |
 
-### Sprint 24 Acceptance Criteria
-- Agentic probe suite detects tool call injection and memory poisoning in test scenarios
-
+### Sprint 24B Acceptance Criteria
 - Policy recommendation generated from red team findings imports correctly and blocks the detected attack in regression test
+
+- Continuous red team scheduling triggers recurring campaigns and alerts on regression in test scenarios
 
 - Red team API integrates with GitHub Actions CI/CD pipeline in reference integration test
 
