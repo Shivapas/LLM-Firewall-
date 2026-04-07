@@ -44,7 +44,7 @@ from app.services.release.v2_checklist import get_v2_release_checklist
 
 logger = logging.getLogger("sphinx.routers.model_security")
 
-router = APIRouter(tags=["model-security"])
+router = APIRouter(prefix="/admin", tags=["model-security"])
 
 
 # ── Request/Response Models ──────────────────────────────────────────────
@@ -220,15 +220,6 @@ async def record_turn(session_id: str, req: TurnRequest):
     return result
 
 
-@router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    store = get_session_context_store()
-    session = store.get_session(session_id)
-    if session is None:
-        raise HTTPException(404, "Session not found")
-    return session.to_dict()
-
-
 @router.get("/sessions")
 async def list_sessions(
     tenant_id: str = Query(""),
@@ -243,6 +234,15 @@ async def list_sessions(
 async def list_escalations(limit: int = Query(50, ge=1, le=200)):
     accumulator = get_cross_turn_risk_accumulator()
     return [e.to_dict() for e in accumulator.get_escalation_events(limit)]
+
+
+@router.get("/sessions/{session_id}")
+async def get_session(session_id: str):
+    store = get_session_context_store()
+    session = store.get_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    return session.to_dict()
 
 
 # ── AI-SPM ──────────────────────────────────────────────────────────────
