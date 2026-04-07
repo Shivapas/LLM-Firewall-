@@ -45,6 +45,7 @@ from app.services.multilingual.unicode_normalizer import get_unicode_normalizer
 from app.services.multilingual.multilingual_detector import get_multilingual_detector
 from app.services.multilingual.language_detector import get_language_router
 from app.services.multilingual.eu_ai_act import get_eu_ai_act_service
+from app.services.red_team.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger("sphinx.main")
 
@@ -229,7 +230,11 @@ async def lifespan(app: FastAPI):
         eu_ai_act = get_eu_ai_act_service()
         logger.info("EU AI Act risk classification and transparency logging initialized")
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready")
+        # Sprint 24B: Start continuous red team scheduler
+        start_scheduler()
+        logger.info("Red team continuous scheduler started")
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
@@ -242,6 +247,9 @@ async def lifespan(app: FastAPI):
         await alert_engine.stop()
     except Exception:
         logger.warning("Error shutting down alert engine", exc_info=True)
+
+    # Stop Sprint 24B red team scheduler
+    stop_scheduler()
 
     await stop_kill_switch_subscriber()
     stop_background_refresh()
