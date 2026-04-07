@@ -961,3 +961,133 @@ class RedTeamRegressionAlert(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# ── Sprint 27: A2A Protocol Firewall ────────────────────────────────────
+
+
+class A2ARegisteredAgent(Base):
+    """Registered agent service account for A2A communication."""
+    __tablename__ = "a2a_registered_agents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    allowed_downstream: Mapped[str] = mapped_column(Text, default="[]")
+    permission_scope: Mapped[str] = mapped_column(Text, default='["read","write"]')
+    signing_secret_hash: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    token_ttl_seconds: Mapped[int] = mapped_column(Integer, default=3600)
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class A2AIssuedToken(Base):
+    """JWT token issued to an agent."""
+    __tablename__ = "a2a_issued_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class A2AAgentCertificate(Base):
+    """mTLS certificate for an agent."""
+    __tablename__ = "a2a_agent_certificates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    cert_fingerprint: Mapped[str] = mapped_column(String(128), unique=True)
+    spiffe_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    serial_number: Mapped[str] = mapped_column(String(64), unique=True)
+    issuer: Mapped[str] = mapped_column(String(128), default="sphinx-ca")
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class A2AMTLSPolicy(Base):
+    """mTLS enforcement policy for agent workflows."""
+    __tablename__ = "a2a_mtls_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    policy_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    workflow_id: Mapped[str] = mapped_column(String(128), index=True)
+    agent_pairs: Mapped[str] = mapped_column(Text, default="[]")
+    framework: Mapped[str] = mapped_column(String(32), default="langgraph")
+    required: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class A2AAuditLogEntry(Base):
+    """Immutable A2A message audit log entry."""
+    __tablename__ = "a2a_audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    record_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    message_id: Mapped[str] = mapped_column(String(64), index=True)
+    sender_agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    receiver_agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    message_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    framework: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    signature_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    token_valid: Mapped[bool] = mapped_column(Boolean, default=False)
+    nonce_valid: Mapped[bool] = mapped_column(Boolean, default=True)
+    mtls_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    action_taken: Mapped[str] = mapped_column(String(64), index=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enforcement_duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    previous_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    record_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class A2ANonceLog(Base):
+    """Used nonces for replay attack prevention."""
+    __tablename__ = "a2a_nonce_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    nonce: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
