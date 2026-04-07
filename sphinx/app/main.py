@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall, a2a_firewall
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -51,6 +51,10 @@ from app.services.memory_firewall.read_anomaly import get_read_anomaly_detector
 from app.services.memory_firewall.lifecycle import get_memory_lifecycle_manager
 from app.services.memory_firewall.integrity import get_memory_integrity_verifier
 from app.services.memory_firewall.isolation import get_memory_isolation_enforcer
+from app.services.hitl.approval_workflow import get_approval_workflow_service
+from app.services.hitl.notification import get_notification_service
+from app.services.hitl.baseline_engine import get_baseline_engine
+from app.services.hitl.anomaly_detector import get_anomaly_detector
 
 logger = logging.getLogger("sphinx.main")
 
@@ -264,13 +268,34 @@ async def lifespan(app: FastAPI):
         logger.info("Memory isolation enforcer initialized: %d permissions configured",
                      isolation_enforcer.permission_count())
 
-        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready, Sprint 25 memory firewall ready, Sprint 26 memory read controls & lifecycle ready")
+        # Sprint 28: HITL Enforcement Checkpoints + Cascading Failure Detection
+        notification_svc = get_notification_service()
+        approval_svc = get_approval_workflow_service(notification_service=notification_svc)
+        await approval_svc.start_expiry_monitor(interval_seconds=10)
+        logger.info("HITL approval workflow initialized with expiry monitor")
+
+        baseline_engine = get_baseline_engine()
+        logger.info("Agent behavioral baseline engine initialized: observation_period=%d days",
+                     baseline_engine.observation_days)
+
+        anomaly_detector = get_anomaly_detector(baseline_engine=baseline_engine)
+        logger.info("Cascading failure anomaly detector initialized: threshold=%.1f, consecutive_to_open=%d",
+                     anomaly_detector.anomaly_threshold, anomaly_detector.consecutive_to_open)
+
+        logger.info("Startup complete: policy cache loaded, kill-switches synced, pub/sub active, audit system ready, health probe active, MCP discovery ready, agent scope ready, Sprint 17 services ready, Sprint 18 audit hardening ready, Sprint 19 dashboard & alerting ready, Sprint 20 performance & GA ready, Sprint 21 multilingual & EU AI Act ready, Sprint 24B red team scheduler ready, Sprint 25 memory firewall ready, Sprint 26 memory read controls & lifecycle ready, Sprint 28 HITL + cascading failure ready")
     except Exception:
         logger.warning("Startup cache loading failed (DB may not be ready)", exc_info=True)
 
     yield
 
     # Shutdown
+    # Stop Sprint 28 approval expiry monitor
+    try:
+        approval_svc = get_approval_workflow_service()
+        await approval_svc.stop_expiry_monitor()
+    except Exception:
+        logger.warning("Error shutting down approval expiry monitor", exc_info=True)
+
     # Stop Sprint 19 alert engine
     try:
         alert_engine = get_alert_engine_service()
@@ -322,3 +347,4 @@ app.include_router(proxy.router)
 app.include_router(admin.router)
 app.include_router(memory_firewall.router)
 app.include_router(a2a_firewall.router)
+app.include_router(hitl.router)
