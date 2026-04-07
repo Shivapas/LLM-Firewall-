@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -321,3 +321,4 @@ app.include_router(health.router)
 app.include_router(proxy.router)
 app.include_router(admin.router)
 app.include_router(memory_firewall.router)
+app.include_router(a2a_firewall.router)
