@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     admin_api_token: str = ""
     allowed_provider_hosts: str = ""  # Comma-separated allowlist of provider hostnames
 
+    # Thoth Semantic Classification Integration (Sprint 1)
+    thoth_enabled: bool = False
+    thoth_api_url: str = ""
+    thoth_api_key: str = ""
+    thoth_timeout_ms: int = 150  # Per FR-PRE-06: default 150ms timeout
+    thoth_max_retries: int = 1   # Retries before timeout fallback
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")
