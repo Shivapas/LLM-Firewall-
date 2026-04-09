@@ -64,6 +64,7 @@ from app.services.semantic_cache.cache_layer import get_semantic_cache_layer
 from app.services.semantic_cache.cache_security import get_cache_security_controller
 from app.services.semantic_cache.cache_audit import get_cache_audit_logger
 from app.services.release.v2_checklist import get_v2_release_checklist
+from app.services.thoth.client import initialize_thoth_client, close_thoth_client
 
 logger = logging.getLogger("sphinx.main")
 
@@ -311,6 +312,27 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Semantic cache services failed to initialize", exc_info=True)
 
+    # ── Thoth Semantic Classification client (Sprint 1) ──
+    try:
+        from app.config import get_settings as _get_settings
+        _settings = _get_settings()
+        if _settings.thoth_enabled and _settings.thoth_api_url:
+            initialize_thoth_client(
+                api_url=_settings.thoth_api_url,
+                api_key=_settings.thoth_api_key,
+                timeout_ms=_settings.thoth_timeout_ms,
+                max_retries=_settings.thoth_max_retries,
+            )
+            logger.info(
+                "Thoth classification client initialized: url=%s timeout_ms=%d",
+                _settings.thoth_api_url,
+                _settings.thoth_timeout_ms,
+            )
+        else:
+            logger.info("Thoth classification disabled (THOTH_ENABLED=false or no URL configured)")
+    except Exception:
+        logger.warning("Thoth client failed to initialize — classification disabled", exc_info=True)
+
     logger.info("Startup complete: all security-critical services operational")
 
     yield
@@ -324,6 +346,7 @@ async def lifespan(app: FastAPI):
         ("kill-switch subscriber", stop_kill_switch_subscriber()),
         ("health probe / failover", _shutdown_health_failover()),
         ("audit system", _shutdown_audit()),
+        ("thoth client", close_thoth_client()),
         ("redis", close_redis()),
         ("http client", close_http_client()),
     ]:

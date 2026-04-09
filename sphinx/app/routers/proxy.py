@@ -24,6 +24,7 @@ from app.services.routing_policy import get_routing_policy_evaluator, RoutingCon
 from app.services.budget_downgrade import get_budget_downgrade_service
 from app.services.routing_audit import emit_routing_audit_event
 from app.services.database import async_session
+from app.services.thoth.classifier import classify_prompt
 from app.config import get_settings
 
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gateway-scan")
@@ -262,6 +263,28 @@ async def gateway_proxy(request: Request, path: str) -> Response:
         model_name = threat_result.downgrade_model or model_name
         audit_action = "downgraded_threat"
 
+    # ── Thoth Semantic Classification (pre-inference, sync with timeout guard) ──
+    # FR-PRE-01: classify all intercepted prompts before LLM forwarding.
+    # FR-PRE-06/07: timeout and unavailability fall back to structural-only enforcement.
+    classification_ctx = None
+    classification_event = "disabled"
+    if settings.thoth_enabled:
+        classification_ctx, classification_event = await classify_prompt(
+            body,
+            tenant_id=tenant_id,
+            application_id=project_id,
+            model_endpoint=model_name or "unknown",
+            session_id=None,
+            request_id=None,
+            timeout_ms=settings.thoth_timeout_ms,
+        )
+        if classification_event in ("timeout", "unavailable"):
+            logger.warning(
+                "Thoth classification %s — proceeding with structural-only enforcement tenant=%s",
+                classification_event,
+                tenant_id,
+            )
+
     # ── Rate limit check ──
     estimated_tokens = _estimate_prompt_tokens(body)
     if api_key_id:
@@ -424,6 +447,12 @@ async def gateway_proxy(request: Request, path: str) -> Response:
         audit_metadata["routing_decision"] = routing_decision.to_dict()
     if downgrade_info:
         audit_metadata["budget_downgrade"] = downgrade_info
+    # FR-AUD-01/02: capture Thoth classification payload in audit record
+    if classification_ctx is not None:
+        audit_metadata["thoth_classification"] = classification_ctx.to_dict()
+        audit_metadata["thoth_event"] = classification_event
+    elif settings.thoth_enabled:
+        audit_metadata["thoth_event"] = classification_event
     try:
         await emit_audit_event(
             request_body=body,
