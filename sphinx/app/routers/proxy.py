@@ -24,7 +24,9 @@ from app.services.routing_policy import get_routing_policy_evaluator, RoutingCon
 from app.services.budget_downgrade import get_budget_downgrade_service
 from app.services.routing_audit import emit_routing_audit_event
 from app.services.database import async_session
-from app.services.thoth.classifier import classify_prompt
+from app.services.thoth.classifier import classify_prompt, make_unavailability_audit_metadata, UNAVAILABILITY_EVENTS
+from app.services.thoth.circuit_breaker import get_thoth_circuit_breaker
+from app.services.thoth.fail_closed import should_fail_closed
 from app.config import get_settings
 
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gateway-scan")
@@ -266,6 +268,10 @@ async def gateway_proxy(request: Request, path: str) -> Response:
     # ── Thoth Semantic Classification (pre-inference, sync with timeout guard) ──
     # FR-PRE-01: classify all intercepted prompts before LLM forwarding.
     # FR-PRE-06/07: timeout and unavailability fall back to structural-only enforcement.
+    # S2-T1: configurable per-request timeout.
+    # S2-T2: circuit breaker suppresses calls when Thoth is persistently failing.
+    # S2-T3: FAIL_CLOSED blocks high-sensitivity requests when Thoth is unavailable.
+    # S2-T4: dedicated audit event emitted on classification unavailability.
     classification_ctx = None
     classification_event = "disabled"
     if settings.thoth_enabled:
@@ -277,13 +283,83 @@ async def gateway_proxy(request: Request, path: str) -> Response:
             session_id=None,
             request_id=None,
             timeout_ms=settings.thoth_timeout_ms,
+            circuit_breaker_enabled=settings.thoth_circuit_breaker_enabled,
         )
-        if classification_event in ("timeout", "unavailable"):
+
+        if classification_event in UNAVAILABILITY_EVENTS:
             logger.warning(
                 "Thoth classification %s — proceeding with structural-only enforcement tenant=%s",
                 classification_event,
                 tenant_id,
             )
+
+            # S2-T4: Emit dedicated audit entry for classification unavailability (FR-AUD-03)
+            try:
+                cb_status = (
+                    get_thoth_circuit_breaker().get_status()
+                    if settings.thoth_circuit_breaker_enabled
+                    else {}
+                )
+                _unavail_metadata = make_unavailability_audit_metadata(
+                    classification_event=classification_event,
+                    tenant_id=tenant_id,
+                    trace_id=classification_ctx.request_id if classification_ctx else "unknown",
+                    fail_closed_enabled=settings.thoth_fail_closed_enabled,
+                    circuit_breaker_status=cb_status,
+                )
+                await emit_audit_event(
+                    request_body=b"",
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    api_key_id=str(api_key_id) if api_key_id else "",
+                    model=model_name or "unknown",
+                    action=f"classification_{classification_event}",
+                    status_code=0,
+                    latency_ms=0.0,
+                    metadata=_unavail_metadata,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to emit classification unavailability audit event",
+                    exc_info=True,
+                )
+
+            # S2-T3: FAIL_CLOSED — block high-sensitivity requests when Thoth unavailable
+            if should_fail_closed(
+                classification_event=classification_event,
+                structural_risk_level=threat_result.risk_level if threat_result else "low",
+                fail_closed_enabled=settings.thoth_fail_closed_enabled,
+                fail_closed_risk_levels=settings.thoth_fail_closed_risk_levels,
+            ):
+                latency_ms = (time.time() - start_time) * 1000
+                try:
+                    await emit_audit_event(
+                        request_body=body,
+                        tenant_id=tenant_id,
+                        project_id=project_id,
+                        api_key_id=str(api_key_id) if api_key_id else "",
+                        model=model_name or "unknown",
+                        action="blocked_fail_closed",
+                        status_code=403,
+                        latency_ms=latency_ms,
+                        metadata={
+                            "reason": "FAIL_CLOSED: Thoth classification unavailable",
+                            "classification_event": classification_event,
+                            "structural_risk_level": threat_result.risk_level if threat_result else "low",
+                            "severity": "CRITICAL",
+                        },
+                    )
+                except Exception:
+                    logger.debug("Failed to emit fail_closed audit event", exc_info=True)
+
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "Request blocked: classification service unavailable (FAIL_CLOSED policy)",
+                        "classification_event": classification_event,
+                        "structural_risk_level": threat_result.risk_level if threat_result else "low",
+                    },
+                )
 
     # ── Rate limit check ──
     estimated_tokens = _estimate_prompt_tokens(body)

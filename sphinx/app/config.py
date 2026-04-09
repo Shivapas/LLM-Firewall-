@@ -21,6 +21,19 @@ class Settings(BaseSettings):
     thoth_timeout_ms: int = 150  # Per FR-PRE-06: default 150ms timeout
     thoth_max_retries: int = 1   # Retries before timeout fallback
 
+    # Thoth Circuit Breaker (Sprint 2 / S2-T2 — FR-CFG-03)
+    # Sustained error rate above threshold disables Thoth calls and
+    # activates structural-only enforcement mode.
+    thoth_circuit_breaker_enabled: bool = True
+    thoth_circuit_breaker_error_threshold: int = 5   # Consecutive failures to open
+    thoth_circuit_breaker_recovery_timeout_s: float = 30.0  # Seconds before half-open probe
+
+    # Thoth FAIL_CLOSED mode (Sprint 2 / S2-T3 — FR-PRE-07)
+    # When enabled and Thoth is unavailable, block requests whose structural
+    # risk level matches thoth_fail_closed_risk_levels (comma-separated).
+    thoth_fail_closed_enabled: bool = False  # Default: allow on unavailability
+    thoth_fail_closed_risk_levels: str = "HIGH,CRITICAL"  # Structural risk levels triggering block
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")

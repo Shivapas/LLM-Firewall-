@@ -65,6 +65,7 @@ from app.services.semantic_cache.cache_security import get_cache_security_contro
 from app.services.semantic_cache.cache_audit import get_cache_audit_logger
 from app.services.release.v2_checklist import get_v2_release_checklist
 from app.services.thoth.client import initialize_thoth_client, close_thoth_client
+from app.services.thoth.circuit_breaker import initialize_thoth_circuit_breaker
 
 logger = logging.getLogger("sphinx.main")
 
@@ -312,10 +313,19 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Semantic cache services failed to initialize", exc_info=True)
 
-    # ── Thoth Semantic Classification client (Sprint 1) ──
+    # ── Thoth Semantic Classification client + circuit breaker (Sprint 1 & 2) ──
     try:
         from app.config import get_settings as _get_settings
         _settings = _get_settings()
+
+        # S2-T2: Initialize circuit breaker regardless of thoth_enabled so it
+        # is available on first use if Thoth is enabled at runtime.
+        if _settings.thoth_circuit_breaker_enabled:
+            initialize_thoth_circuit_breaker(
+                error_threshold=_settings.thoth_circuit_breaker_error_threshold,
+                recovery_timeout_s=_settings.thoth_circuit_breaker_recovery_timeout_s,
+            )
+
         if _settings.thoth_enabled and _settings.thoth_api_url:
             initialize_thoth_client(
                 api_url=_settings.thoth_api_url,
@@ -324,9 +334,12 @@ async def lifespan(app: FastAPI):
                 max_retries=_settings.thoth_max_retries,
             )
             logger.info(
-                "Thoth classification client initialized: url=%s timeout_ms=%d",
+                "Thoth classification client initialized: url=%s timeout_ms=%d "
+                "fail_closed=%s circuit_breaker_enabled=%s",
                 _settings.thoth_api_url,
                 _settings.thoth_timeout_ms,
+                _settings.thoth_fail_closed_enabled,
+                _settings.thoth_circuit_breaker_enabled,
             )
         else:
             logger.info("Thoth classification disabled (THOTH_ENABLED=false or no URL configured)")

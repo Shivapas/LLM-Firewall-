@@ -1,16 +1,28 @@
 """Sphinx-side Thoth classification orchestrator.
 
-Sprint 1 / S1-T2 support layer:
-Wraps ThothClient with timeout-guard, fallback, and structured audit logging
-so that proxy.py calls a single ``classify_prompt()`` async function.
+Sprint 1 / S1-T2 — entry point for proxy.py; wraps ThothClient with
+timeout-guard, fallback, and structured audit logging.
 
-Responsibilities:
-- Extract prompt text + system prompt from request body.
-- Build a ClassificationRequest with Sphinx trace context.
-- Call ThothClient within the configured latency budget.
-- On timeout  → return make_timeout_context() and log FR-PRE-06 event.
-- On error    → return make_unavailable_context() and log FR-PRE-07 event.
-- On success  → return populated ClassificationContext.
+Sprint 2 enhancements
+---------------------
+S2-T1  Timeout enforcement: configurable per-request timeout, structural-only
+       fallback on expiry, FAIL_CLOSED support via caller (proxy.py).
+S2-T2  Circuit breaker: ``ThothCircuitBreaker`` is checked before every call.
+       When the circuit is OPEN, return ``"circuit_open"`` event immediately
+       without making a network request. Successes and failures are recorded
+       to drive open/close transitions.
+S2-T4  Dedicated audit helper: ``make_unavailability_audit_metadata()`` builds
+       the structured payload for the dedicated classification-unavailability
+       audit event emitted by proxy.py.
+
+Event types returned by ``classify_prompt()``
+---------------------------------------------
+"classified"    Successful Thoth classification.
+"timeout"       Thoth exceeded configured latency budget (FR-PRE-06).
+"unavailable"   Thoth API error / unreachable (FR-PRE-07).
+"circuit_open"  Circuit breaker is open — Thoth calls suppressed (S2-T2).
+"disabled"      Thoth integration not enabled in config.
+"no_content"    No prompt text could be extracted from the request body.
 """
 
 from __future__ import annotations
@@ -25,6 +37,7 @@ from typing import Optional
 import httpx
 
 from app.services.thoth.client import get_thoth_client
+from app.services.thoth.circuit_breaker import get_thoth_circuit_breaker
 from app.services.thoth.models import (
     ClassificationContext,
     ClassificationRequest,
@@ -33,6 +46,11 @@ from app.services.thoth.models import (
 )
 
 logger = logging.getLogger("sphinx.thoth.classifier")
+
+# Events that represent Thoth being unavailable for dedicated audit emission
+UNAVAILABILITY_EVENTS: frozenset[str] = frozenset(
+    {"timeout", "unavailable", "circuit_open"}
+)
 
 
 def _extract_prompt_and_system(body: bytes) -> tuple[str, Optional[str]]:
@@ -94,19 +112,27 @@ async def classify_prompt(
     session_id: Optional[str] = None,
     request_id: Optional[str] = None,
     timeout_ms: int = 150,
+    circuit_breaker_enabled: bool = True,
 ) -> tuple[Optional[ClassificationContext], str]:
     """Classify a prompt via Thoth and return (context, event_type).
 
-    Returns:
-        (ClassificationContext, event_type) where event_type is one of:
-        - ``"classified"``         — successful Thoth classification
-        - ``"timeout"``            — Thoth exceeded latency budget (FR-PRE-06)
-        - ``"unavailable"``        — Thoth API error / unreachable (FR-PRE-07)
-        - ``"disabled"``           — Thoth not enabled in config
-        - ``"no_content"``         — No prompt text to classify
+    Args:
+        body:                    Raw HTTP request body bytes.
+        tenant_id:               Hashed tenant identifier (for logging/audit).
+        application_id:          Application / project identifier.
+        model_endpoint:          Target LLM endpoint name.
+        session_id:              Optional session correlation ID.
+        request_id:              Optional Sphinx trace ID; generated if None.
+        timeout_ms:              Per-request Thoth API timeout in milliseconds
+                                 (S2-T1 — configurable, default 150ms per FR-PRE-06).
+        circuit_breaker_enabled: Whether to consult the Thoth circuit breaker
+                                 before making a call (S2-T2).
 
-    The returned ClassificationContext is always non-None for types other than
-    ``"disabled"`` and ``"no_content"``.
+    Returns:
+        Tuple of (ClassificationContext | None, event_type).
+
+        The ClassificationContext is always non-None for event types other than
+        ``"disabled"`` and ``"no_content"``.
     """
     thoth = get_thoth_client()
     if thoth is None:
@@ -117,6 +143,18 @@ async def classify_prompt(
         return None, "no_content"
 
     trace_id = request_id or str(uuid.uuid4())
+
+    # ── S2-T2: Circuit breaker check ──────────────────────────────────────
+    if circuit_breaker_enabled:
+        cb = get_thoth_circuit_breaker()
+        if not cb.is_available():
+            logger.warning(
+                "Thoth circuit breaker OPEN — skipping classification call "
+                "tenant=%s trace_id=%s",
+                tenant_id,
+                trace_id,
+            )
+            return make_unavailable_context(trace_id, reason="circuit_open"), "circuit_open"
 
     classification_request = ClassificationRequest(
         request_id=trace_id,
@@ -129,6 +167,7 @@ async def classify_prompt(
         session_id=session_id,
     )
 
+    # ── S2-T1: Timeout-guarded Thoth call ─────────────────────────────────
     timeout_s = timeout_ms / 1000.0
 
     try:
@@ -136,8 +175,14 @@ async def classify_prompt(
             thoth.classify(classification_request),
             timeout=timeout_s,
         )
+
+        # Record success to circuit breaker
+        if circuit_breaker_enabled:
+            get_thoth_circuit_breaker().record_success()
+
         logger.info(
-            "Thoth classification: intent=%s risk=%s confidence=%.2f pii=%s latency_ms=%d tenant=%s",
+            "Thoth classification: intent=%s risk=%s confidence=%.2f "
+            "pii=%s latency_ms=%d tenant=%s",
             ctx.intent,
             ctx.risk_level,
             ctx.confidence,
@@ -148,17 +193,67 @@ async def classify_prompt(
         return ctx, "classified"
 
     except (asyncio.TimeoutError, httpx.TimeoutException):
+        # Record failure to circuit breaker (S2-T2)
+        if circuit_breaker_enabled:
+            get_thoth_circuit_breaker().record_failure()
+
         logger.warning(
-            "Thoth classification TIMEOUT (>%dms) — structural-only enforcement active tenant=%s",
+            "Thoth classification TIMEOUT (>%dms) — structural-only enforcement "
+            "active tenant=%s trace_id=%s",
             timeout_ms,
             tenant_id,
+            trace_id,
         )
         return make_timeout_context(trace_id), "timeout"
 
     except Exception as exc:
+        # Record failure to circuit breaker (S2-T2)
+        if circuit_breaker_enabled:
+            get_thoth_circuit_breaker().record_failure()
+
         logger.warning(
-            "Thoth classification UNAVAILABLE — structural-only enforcement active tenant=%s error=%s",
+            "Thoth classification UNAVAILABLE — structural-only enforcement "
+            "active tenant=%s trace_id=%s error=%s",
             tenant_id,
+            trace_id,
             exc,
         )
         return make_unavailable_context(trace_id), "unavailable"
+
+
+def make_unavailability_audit_metadata(
+    *,
+    classification_event: str,
+    tenant_id: str,
+    trace_id: str,
+    fail_closed_enabled: bool = False,
+    circuit_breaker_status: Optional[dict] = None,
+) -> dict:
+    """Build structured metadata for a dedicated classification-unavailability
+    audit event (S2-T4 / FR-AUD-03).
+
+    This payload is included in the audit event emitted by proxy.py when
+    ``classification_event`` is one of ``"timeout"``, ``"unavailable"``, or
+    ``"circuit_open"``.
+
+    Args:
+        classification_event:    The event type from ``classify_prompt()``.
+        tenant_id:               Tenant identifier for context.
+        trace_id:                Sphinx trace / request ID.
+        fail_closed_enabled:     Whether FAIL_CLOSED mode is active.
+        circuit_breaker_status:  Optional snapshot from
+                                 ``ThothCircuitBreaker.get_status()``.
+
+    Returns:
+        Dictionary suitable for use as the ``metadata`` field of an audit event.
+    """
+    return {
+        "event_type": "thoth_classification_unavailability",
+        "classification_event": classification_event,
+        "fallback_mode": "structural_only",
+        "severity": "WARNING",
+        "fail_closed_enabled": fail_closed_enabled,
+        "tenant_id": tenant_id,
+        "trace_id": trace_id,
+        "circuit_breaker": circuit_breaker_status or {},
+    }
