@@ -21,6 +21,9 @@ class AuditEvent(BaseModel):
     Sprint 18: every event MUST have the required fields:
     timestamp, request_hash, tenant_id, model, policy_version,
     risk_score, action_taken, enforcement_duration_ms.
+
+    Sprint 5 (Thoth): classification_* fields carry Thoth semantic
+    classification metadata as first-class audit attributes (FR-AUD-01/02).
     """
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: float = Field(default_factory=time.time)
@@ -45,6 +48,16 @@ class AuditEvent(BaseModel):
     # Sprint 18: hash chain fields (set by writer)
     previous_hash: str = ""
     record_hash: str = ""
+
+    # Sprint 5: Thoth classification metadata (FR-AUD-01, FR-AUD-02)
+    classification_intent: str = ""                  # Thoth intent category
+    classification_risk_level: str = ""              # LOW | MEDIUM | HIGH | CRITICAL | UNKNOWN
+    classification_confidence: float = 0.0           # 0.00–1.00
+    classification_pii_detected: bool = False
+    classification_pii_types: list[str] = Field(default_factory=list)  # e.g. ["AADHAAR", "EMAIL"]
+    classification_latency_ms: int = 0               # Thoth API round-trip latency
+    classification_model_version: str = ""           # Thoth model version string
+    classification_source: str = ""                  # "thoth" | "structural_fallback" | ""
 
     # Class-level constant (not a Pydantic field)
     _REQUIRED_FIELDS: list[str] = [
@@ -244,6 +257,10 @@ class AuditEventConsumer:
                     logger.debug("Duplicate audit event skipped: hash=%s", request_hash)
                     return
 
+            # Sprint 5: persist classification_pii_types as JSON string
+            pii_types = event_data.get("classification_pii_types", [])
+            pii_types_json = json.dumps(pii_types) if pii_types else None
+
             record = AuditLog(
                 id=uuid.UUID(event_data.get("event_id", str(uuid.uuid4()))),
                 request_hash=request_hash,
@@ -266,6 +283,15 @@ class AuditEventConsumer:
                 enforcement_duration_ms=event_data.get("enforcement_duration_ms", 0.0),
                 previous_hash=event_data.get("previous_hash", ""),
                 record_hash=event_data.get("record_hash", ""),
+                # Sprint 5: Thoth classification metadata (FR-AUD-01, FR-AUD-02)
+                classification_intent=event_data.get("classification_intent") or None,
+                classification_risk_level=event_data.get("classification_risk_level") or None,
+                classification_confidence=event_data.get("classification_confidence") or None,
+                classification_pii_detected=event_data.get("classification_pii_detected") or None,
+                classification_pii_types=pii_types_json,
+                classification_latency_ms=event_data.get("classification_latency_ms") or None,
+                classification_model_version=event_data.get("classification_model_version") or None,
+                classification_source=event_data.get("classification_source") or None,
             )
             db.add(record)
             await db.commit()
@@ -331,6 +357,15 @@ async def emit_audit_event(
     action_taken: str = "",
     enforcement_duration_ms: float = 0.0,
     metadata: Optional[dict] = None,
+    # Sprint 5: Thoth classification fields (FR-AUD-01, FR-AUD-02)
+    classification_intent: str = "",
+    classification_risk_level: str = "",
+    classification_confidence: float = 0.0,
+    classification_pii_detected: bool = False,
+    classification_pii_types: Optional[list] = None,
+    classification_latency_ms: int = 0,
+    classification_model_version: str = "",
+    classification_source: str = "",
 ) -> AuditEvent:
     """Convenience function to emit an audit event."""
     ts = time.time()
@@ -352,6 +387,15 @@ async def emit_audit_event(
         action_taken=action_taken or action,
         enforcement_duration_ms=enforcement_duration_ms,
         metadata=metadata or {},
+        # Sprint 5: classification metadata
+        classification_intent=classification_intent,
+        classification_risk_level=classification_risk_level,
+        classification_confidence=classification_confidence,
+        classification_pii_detected=classification_pii_detected,
+        classification_pii_types=classification_pii_types or [],
+        classification_latency_ms=classification_latency_ms,
+        classification_model_version=classification_model_version,
+        classification_source=classification_source,
     )
 
     writer = get_audit_writer()

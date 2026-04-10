@@ -96,6 +96,10 @@ class AuditLog(Base):
 
     Sprint 18: adds risk_score, action_taken, enforcement_duration_ms,
     previous_hash, record_hash for tamper-evident hash chaining.
+
+    Sprint 5 (Thoth): adds classification_* columns for Thoth semantic
+    classification metadata as first-class audit schema fields (FR-AUD-01/02).
+    Backward-compatible: all new columns are nullable with safe defaults.
     """
     __tablename__ = "audit_logs"
 
@@ -124,6 +128,16 @@ class AuditLog(Base):
     previous_hash: Mapped[str] = mapped_column(String(64), default="")
     record_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     chain_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    # Sprint 5: Thoth classification metadata — first-class schema fields (FR-AUD-01, FR-AUD-02)
+    # All nullable for backward compatibility with pre-Sprint-5 audit records.
+    classification_intent: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    classification_risk_level: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
+    classification_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    classification_pii_detected: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    classification_pii_types: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)  # JSON-encoded list
+    classification_latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    classification_model_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    classification_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
