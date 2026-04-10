@@ -4440,3 +4440,121 @@ async def get_cicd_verdict(
         max_critical=max_critical,
         max_high=max_high,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5 — Thoth Classification Observability Dashboard (FR-AUD-04)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard/classification")
+async def get_classification_dashboard(
+    period_hours: int = 720,
+    bucket_size: str = "hour",
+    db=Depends(get_db),
+):
+    """Full classification observability dashboard (all five views, S5-T3 to S5-T7).
+
+    Returns intent breakdown, risk heatmap, confidence histogram, PII detection
+    frequency, and classification latency percentiles for the requested window.
+
+    - ``period_hours``: look-back window in hours (default 720 = 30 days).
+    - ``bucket_size``: time-bucket granularity for heatmap / trend — ``hour`` or ``day``.
+    """
+    from app.services.database import async_session
+    from app.services.dashboard.classification_observability import (
+        get_classification_observability,
+    )
+    svc = get_classification_observability(session_factory=async_session)
+    return await svc.get_full_dashboard(period_hours=period_hours, bucket_size=bucket_size)
+
+
+@router.get("/dashboard/classification/intent")
+async def get_classification_intent_breakdown(
+    period_hours: int = 720,
+    db=Depends(get_db),
+):
+    """Intent category breakdown — pie/bar chart data (S5-T3).
+
+    Returns count and percentage per Thoth intent category over the look-back window.
+    """
+    from app.services.database import async_session
+    from app.services.dashboard.classification_observability import (
+        get_classification_observability,
+    )
+    svc = get_classification_observability(session_factory=async_session)
+    return await svc.get_intent_breakdown(period_hours=period_hours)
+
+
+@router.get("/dashboard/classification/risk-heatmap")
+async def get_classification_risk_heatmap(
+    period_hours: int = 720,
+    bucket_size: str = "hour",
+    db=Depends(get_db),
+):
+    """Risk level heatmap — risk_level × time for trend detection (S5-T4).
+
+    Each cell contains a (time_bucket, risk_level, count) triple suitable for
+    rendering a 2-D heatmap chart.
+    """
+    from app.services.database import async_session
+    from app.services.dashboard.classification_observability import (
+        get_classification_observability,
+    )
+    svc = get_classification_observability(session_factory=async_session)
+    return await svc.get_risk_heatmap(period_hours=period_hours, bucket_size=bucket_size)
+
+
+@router.get("/dashboard/classification/confidence")
+async def get_classification_confidence_histogram(
+    period_hours: int = 720,
+    db=Depends(get_db),
+):
+    """Confidence score histogram — distribution of Thoth confidence values (S5-T5).
+
+    Returns 10 equal-width buckets spanning [0.0, 1.0] with count, percentage,
+    mean, and median confidence.
+    """
+    from app.services.database import async_session
+    from app.services.dashboard.classification_observability import (
+        get_classification_observability,
+    )
+    svc = get_classification_observability(session_factory=async_session)
+    return await svc.get_confidence_histogram(period_hours=period_hours)
+
+
+@router.get("/dashboard/classification/pii")
+async def get_classification_pii_detection(
+    period_hours: int = 720,
+    bucket_size: str = "hour",
+    db=Depends(get_db),
+):
+    """PII detection frequency — type breakdown and trend over time (S5-T6).
+
+    Returns total PII detection rate, per-type counts, and a time-series trend
+    of PII-detected requests bucketed by ``bucket_size``.
+    """
+    from app.services.database import async_session
+    from app.services.dashboard.classification_observability import (
+        get_classification_observability,
+    )
+    svc = get_classification_observability(session_factory=async_session)
+    return await svc.get_pii_detection(period_hours=period_hours, bucket_size=bucket_size)
+
+
+@router.get("/dashboard/classification/latency")
+async def get_classification_latency(
+    period_hours: int = 720,
+    db=Depends(get_db),
+):
+    """Classification latency percentiles — P50/P95/P99 Thoth API latency (S5-T7).
+
+    Computes latency percentiles only from live Thoth responses (source=``thoth``),
+    excluding structural fallback entries.  Also reports the timeout rate.
+    """
+    from app.services.database import async_session
+    from app.services.dashboard.classification_observability import (
+        get_classification_observability,
+    )
+    svc = get_classification_observability(session_factory=async_session)
+    return await svc.get_latency_percentiles(period_hours=period_hours)
