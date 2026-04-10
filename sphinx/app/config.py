@@ -34,6 +34,21 @@ class Settings(BaseSettings):
     thoth_fail_closed_enabled: bool = False  # Default: allow on unavailability
     thoth_fail_closed_risk_levels: str = "HIGH,CRITICAL"  # Structural risk levels triggering block
 
+    # Thoth Post-Inference Async Classification (Sprint 4 / S4-T1 — FR-POST-01)
+    # Timeout is longer than the pre-inference 150ms since post-inference runs
+    # asynchronously and does not add to the end-to-end request latency.
+    thoth_post_inference_enabled: bool = True   # Enable async response classification
+    thoth_post_inference_timeout_ms: int = 5000  # 5 s timeout for response classification
+
+    # SIEM / Data Lake Export (Sprint 4 / S4-T5 — FR-POST-05)
+    siem_export_enabled: bool = False
+    siem_export_url: str = ""
+    siem_export_api_key: str = ""
+    siem_export_format: str = "webhook"      # webhook | splunk_hec | datadog
+    siem_export_timeout_ms: int = 5000
+    siem_export_batch_size: int = 50
+    siem_export_flush_interval_s: float = 5.0
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")

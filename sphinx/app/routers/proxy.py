@@ -644,6 +644,41 @@ async def gateway_proxy(request: Request, path: str) -> Response:
     except Exception:
         logger.debug("Failed to emit audit event", exc_info=True)
 
+    # ── Sprint 4: Post-inference async classification (FR-POST-01) ──
+    # Non-blocking fire-and-forget: submit the LLM response to Thoth for
+    # async classification AFTER the response is delivered to the caller.
+    # The main request path returns immediately without waiting for the result.
+    # S4-T1: asyncio.create_task() ensures non-blocking I/O (NFR scalability).
+    if (
+        settings.thoth_enabled
+        and getattr(settings, "thoth_post_inference_enabled", True)
+        and response.status_code == 200
+        and hasattr(response, "body")
+    ):
+        try:
+            from app.services.thoth.post_inference import submit_post_inference_classification
+            _prompt_request_id = (
+                classification_ctx.request_id
+                if classification_ctx is not None
+                else ""
+            )
+            submit_post_inference_classification(
+                response_body=response.body,
+                prompt_request_id=_prompt_request_id,
+                tenant_id=tenant_id,
+                project_id=project_id,
+                api_key_id=str(api_key_id) if api_key_id else "",
+                model_endpoint=model_name or "unknown",
+                session_id=None,
+                audit_event_id=None,   # Correlated by prompt_request_id
+                circuit_breaker_enabled=settings.thoth_circuit_breaker_enabled,
+                timeout_ms=getattr(settings, "thoth_post_inference_timeout_ms", 5000),
+            )
+        except Exception:
+            logger.debug(
+                "Failed to schedule post-inference classification", exc_info=True
+            )
+
     # ── Token budget tracking (async, best-effort) ──
     if api_key_id and response.status_code == 200:
         try:

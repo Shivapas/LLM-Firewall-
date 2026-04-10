@@ -66,6 +66,7 @@ from app.services.semantic_cache.cache_audit import get_cache_audit_logger
 from app.services.release.v2_checklist import get_v2_release_checklist
 from app.services.thoth.client import initialize_thoth_client, close_thoth_client
 from app.services.thoth.circuit_breaker import initialize_thoth_circuit_breaker
+from app.services.siem_export import initialize_siem_exporter, close_siem_exporter
 
 logger = logging.getLogger("sphinx.main")
 
@@ -335,16 +336,46 @@ async def lifespan(app: FastAPI):
             )
             logger.info(
                 "Thoth classification client initialized: url=%s timeout_ms=%d "
-                "fail_closed=%s circuit_breaker_enabled=%s",
+                "fail_closed=%s circuit_breaker_enabled=%s "
+                "post_inference_enabled=%s post_inference_timeout_ms=%d",
                 _settings.thoth_api_url,
                 _settings.thoth_timeout_ms,
                 _settings.thoth_fail_closed_enabled,
                 _settings.thoth_circuit_breaker_enabled,
+                _settings.thoth_post_inference_enabled,
+                _settings.thoth_post_inference_timeout_ms,
             )
         else:
             logger.info("Thoth classification disabled (THOTH_ENABLED=false or no URL configured)")
     except Exception:
         logger.warning("Thoth client failed to initialize — classification disabled", exc_info=True)
+
+    # ── SIEM / Data Lake Export (Sprint 4 / S4-T5 — FR-POST-05) ──
+    try:
+        from app.config import get_settings as _get_siem_settings
+        _siem_settings = _get_siem_settings()
+        if _siem_settings.siem_export_enabled and _siem_settings.siem_export_url:
+            siem_exporter = initialize_siem_exporter(
+                export_url=_siem_settings.siem_export_url,
+                api_key=_siem_settings.siem_export_api_key,
+                export_format=_siem_settings.siem_export_format,
+                timeout_ms=_siem_settings.siem_export_timeout_ms,
+                batch_size=_siem_settings.siem_export_batch_size,
+                flush_interval_s=_siem_settings.siem_export_flush_interval_s,
+            )
+            await siem_exporter.start()
+            logger.info(
+                "SIEM exporter initialized: url=%s format=%s batch_size=%d "
+                "flush_interval=%.1fs",
+                _siem_settings.siem_export_url,
+                _siem_settings.siem_export_format,
+                _siem_settings.siem_export_batch_size,
+                _siem_settings.siem_export_flush_interval_s,
+            )
+        else:
+            logger.info("SIEM export disabled (SIEM_EXPORT_ENABLED=false or no URL configured)")
+    except Exception:
+        logger.warning("SIEM exporter failed to initialize — export disabled", exc_info=True)
 
     logger.info("Startup complete: all security-critical services operational")
 
@@ -359,6 +390,7 @@ async def lifespan(app: FastAPI):
         ("kill-switch subscriber", stop_kill_switch_subscriber()),
         ("health probe / failover", _shutdown_health_failover()),
         ("audit system", _shutdown_audit()),
+        ("siem exporter", close_siem_exporter()),
         ("thoth client", close_thoth_client()),
         ("redis", close_redis()),
         ("http client", close_http_client()),
