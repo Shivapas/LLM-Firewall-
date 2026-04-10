@@ -61,6 +61,20 @@ class Settings(BaseSettings):
     # S6-T3: Cross-vendor parity — vendor detection is always active when
     # thoth_proxy_plugin_enabled is True; no additional flag needed.
 
+    # Indian Regulatory Compliance Mode — Sprint 7 (DPDPA / CERT-In)
+    # S7-T1: On-prem / VPC Thoth endpoint support with residency tagging.
+    # JSON string containing residency config list.
+    # Format: '[{"application_id": "*", "region": "in-mum-1",
+    #   "deployment_mode": "on_prem", "data_residency_zone": "INDIA",
+    #   "endpoint_url_override": "https://thoth.internal.in:8443",
+    #   "regulatory_tags": ["DPDPA_COMPLIANT"], "require_on_prem": true}]'
+    thoth_residency_configs_json: str = ""
+
+    # S7-T3: PII content hashing before Thoth transmission (DPDPA data minimisation).
+    thoth_pii_hashing_enabled: bool = False
+    thoth_pii_hashing_salt: str = ""       # HMAC salt — MUST be set in production
+    thoth_pii_hashing_types: str = "AADHAAR,PAN,BANK_ACCOUNT"  # PII types to hash
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")
