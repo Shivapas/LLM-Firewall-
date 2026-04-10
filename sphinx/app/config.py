@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     siem_export_batch_size: int = 50
     siem_export_flush_interval_s: float = 5.0
 
+    # Thoth Gateway / Proxy Integration Mode (Sprint 6)
+    # Per-application (route-level) classification configuration.
+    # S6-T1: Proxy plugin — Thoth callable from reverse proxy intercept layer.
+    thoth_proxy_plugin_enabled: bool = True   # Enable ThothProxyPlugin in the proxy layer
+    # S6-T2: Per-application classification enablement via RouteConfigRegistry.
+    # JSON string or path to a file containing per-route config list.
+    # Format: '[{"application_id": "app1", "enabled": true, "timeout_ms": 200}]'
+    # Empty string means no per-route overrides; all routes use global thoth_enabled.
+    thoth_route_configs_json: str = ""
+    # S6-T3: Cross-vendor parity — vendor detection is always active when
+    # thoth_proxy_plugin_enabled is True; no additional flag needed.
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")

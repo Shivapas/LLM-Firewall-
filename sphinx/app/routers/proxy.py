@@ -27,6 +27,7 @@ from app.services.database import async_session
 from app.services.thoth.classifier import classify_prompt, make_unavailability_audit_metadata, UNAVAILABILITY_EVENTS
 from app.services.thoth.circuit_breaker import get_thoth_circuit_breaker
 from app.services.thoth.fail_closed import should_fail_closed
+from app.services.thoth.proxy_plugin import get_thoth_proxy_plugin
 from app.services.classification_policy import (
     get_classification_policy_evaluator,
     PolicyEvalContext,
@@ -277,9 +278,30 @@ async def gateway_proxy(request: Request, path: str) -> Response:
     # S2-T2: circuit breaker suppresses calls when Thoth is persistently failing.
     # S2-T3: FAIL_CLOSED blocks high-sensitivity requests when Thoth is unavailable.
     # S2-T4: dedicated audit event emitted on classification unavailability.
+    # Sprint 6 (S6-T1/S6-T2): ThothProxyPlugin provides route-level enablement
+    # and per-application config overrides; vendor tagging for parity tracking.
     classification_ctx = None
     classification_event = "disabled"
-    if settings.thoth_enabled:
+    _proxy_result = None
+    if settings.thoth_enabled and getattr(settings, "thoth_proxy_plugin_enabled", True):
+        _proxy_plugin = get_thoth_proxy_plugin()
+        _proxy_result = await _proxy_plugin.classify_for_route(
+            body,
+            application_id=project_id,
+            model_name=model_name,
+            model_endpoint=model_name or "unknown",
+            tenant_id=tenant_id,
+            session_id=None,
+            request_id=None,
+            global_thoth_enabled=settings.thoth_enabled,
+            global_timeout_ms=settings.thoth_timeout_ms,
+            global_fail_closed_enabled=settings.thoth_fail_closed_enabled,
+            circuit_breaker_enabled=settings.thoth_circuit_breaker_enabled,
+        )
+        classification_ctx = _proxy_result.classification
+        classification_event = _proxy_result.event_type
+    elif settings.thoth_enabled:
+        # Fallback: direct classify_prompt() when proxy plugin is disabled
         classification_ctx, classification_event = await classify_prompt(
             body,
             tenant_id=tenant_id,
@@ -330,10 +352,18 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                 )
 
             # S2-T3: FAIL_CLOSED — block high-sensitivity requests when Thoth unavailable
+            # Sprint 6: use per-route fail_closed override if proxy plugin resolved one
+            _effective_fail_closed = settings.thoth_fail_closed_enabled
+            if _proxy_result is not None and _proxy_result.route_config is not None:
+                _proxy_plugin_ref = get_thoth_proxy_plugin()
+                _effective_fail_closed = _proxy_plugin_ref.get_effective_fail_closed(
+                    _proxy_result.route_config,
+                    settings.thoth_fail_closed_enabled,
+                )
             if should_fail_closed(
                 classification_event=classification_event,
                 structural_risk_level=threat_result.risk_level if threat_result else "low",
-                fail_closed_enabled=settings.thoth_fail_closed_enabled,
+                fail_closed_enabled=_effective_fail_closed,
                 fail_closed_risk_levels=settings.thoth_fail_closed_risk_levels,
             ):
                 latency_ms = (time.time() - start_time) * 1000
@@ -619,11 +649,19 @@ async def gateway_proxy(request: Request, path: str) -> Response:
     if downgrade_info:
         audit_metadata["budget_downgrade"] = downgrade_info
     # FR-AUD-01/02: capture Thoth classification payload in audit record
+    # Sprint 6: include proxy plugin vendor metadata when available
     if classification_ctx is not None:
         audit_metadata["thoth_classification"] = classification_ctx.to_dict()
         audit_metadata["thoth_event"] = classification_event
     elif settings.thoth_enabled:
         audit_metadata["thoth_event"] = classification_event
+    if _proxy_result is not None:
+        audit_metadata["thoth_proxy_plugin"] = {
+            "vendor": _proxy_result.vendor,
+            "application_id": _proxy_result.application_id,
+            "route_enabled": _proxy_result.route_config.enabled if _proxy_result.route_config else True,
+            "policy_group_id": _proxy_result.route_config.policy_group_id if _proxy_result.route_config else "",
+        }
     # Sprint 3 (FR-AUD-02): include classification policy evaluation result
     if classification_policy_result is not None:
         audit_metadata["classification_policy"] = classification_policy_result.to_dict()
