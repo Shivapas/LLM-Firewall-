@@ -118,3 +118,47 @@ def make_timeout_context(request_id: str) -> ClassificationContext:
         latency_ms=0,
         source="structural_fallback",
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 4 — Post-inference response classification request (FR-POST-01/02)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ResponseClassificationRequest:
+    """Payload sent from Sphinx to Thoth for post-inference response classification.
+
+    Extends the base classification contract with response-specific fields:
+    - ``content_type`` is always ``"response"`` to signal post-inference mode.
+    - ``prompt_request_id`` correlates this classification to the original prompt
+      request's Sphinx trace ID, enabling full prompt-response linkage in audit
+      records (FR-POST-03).
+    - ``audit_event_id`` optionally links to the prompt-phase audit event.
+    """
+
+    request_id: str                          # New unique ID for this response classification
+    content: str                             # LLM response text
+    content_type: str = "response"
+    prompt_request_id: str = ""             # Original prompt Sphinx trace ID (correlation)
+    system_prompt: Optional[str] = None
+    user_id: Optional[str] = None
+    application_id: Optional[str] = None
+    model_endpoint: Optional[str] = None
+    session_id: Optional[str] = None
+    audit_event_id: Optional[str] = None    # Original prompt audit event ID
+
+    def to_dict(self) -> dict:
+        return {
+            "request_id": self.request_id,
+            "content_type": self.content_type,
+            "content": self.content,
+            "system_prompt": self.system_prompt,
+            "context": {
+                "user_id": self.user_id,
+                "application_id": self.application_id,
+                "model_endpoint": self.model_endpoint,
+                "session_id": self.session_id,
+                "prompt_request_id": self.prompt_request_id,
+                "audit_event_id": self.audit_event_id,
+            },
+        }

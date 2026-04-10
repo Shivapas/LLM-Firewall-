@@ -71,6 +71,7 @@ class AlertEngineService:
         "new_critical_mcp_tool",
         "kill_switch_activation",
         "anomaly_score_breach",
+        "post_inference_risk_alert",   # Sprint 4 — S4-T4 (FR-POST-04)
     }
 
     def __init__(self, session_factory=None):
@@ -273,6 +274,69 @@ class AlertEngineService:
             return await self._check_new_critical_mcp_tool()
 
         return None
+
+    # ── Sprint 4: Post-inference alert delivery (S4-T4) ────────────────
+
+    async def notify_post_inference_alert(
+        self, context: AlertTriggerContext
+    ) -> list[AlertEventRecord]:
+        """Fire all active ``post_inference_risk_alert`` rules matching the
+        trigger context tenant (Sprint 4 / S4-T4 — FR-POST-04).
+
+        Called from the post-inference worker after Thoth classifies a
+        response as HIGH or CRITICAL risk.  Looks up all active rules with
+        ``condition_type == "post_inference_risk_alert"`` and fires each one
+        that matches the tenant scope and has not recently fired (cooldown).
+
+        Args:
+            context: AlertTriggerContext produced by the post-inference worker.
+
+        Returns:
+            List of fired AlertEventRecord instances (may be empty if no
+            matching rules exist or all are in cooldown).
+        """
+        if not self._session_factory:
+            return []
+
+        from sqlalchemy import select
+        from app.models.api_key import AlertRule
+
+        try:
+            async with self._session_factory() as db:
+                result = await db.execute(
+                    select(AlertRule).where(
+                        AlertRule.condition_type == "post_inference_risk_alert",
+                        AlertRule.is_active.is_(True),
+                    )
+                )
+                rules = result.scalars().all()
+        except Exception:
+            logger.warning(
+                "Failed to query post_inference_risk_alert rules", exc_info=True
+            )
+            return []
+
+        fired: list[AlertEventRecord] = []
+        for rule in rules:
+            # Tenant scope — "*" matches any tenant
+            if rule.tenant_id not in ("*", context.tenant_id):
+                continue
+            try:
+                event = await self.fire_alert(str(rule.id), context)
+                if event.delivery_status != "cooldown":
+                    fired.append(event)
+            except Exception:
+                logger.warning(
+                    "Error firing post_inference alert rule=%s", rule.name, exc_info=True
+                )
+
+        if fired:
+            logger.info(
+                "Post-inference alert rules fired: count=%d tenant=%s",
+                len(fired),
+                context.tenant_id,
+            )
+        return fired
 
     async def evaluate_all_rules(self) -> list[AlertEventRecord]:
         """Evaluate all active rules and fire alerts where conditions are met."""
