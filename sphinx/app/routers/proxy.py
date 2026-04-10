@@ -27,6 +27,11 @@ from app.services.database import async_session
 from app.services.thoth.classifier import classify_prompt, make_unavailability_audit_metadata, UNAVAILABILITY_EVENTS
 from app.services.thoth.circuit_breaker import get_thoth_circuit_breaker
 from app.services.thoth.fail_closed import should_fail_closed
+from app.services.classification_policy import (
+    get_classification_policy_evaluator,
+    PolicyEvalContext,
+    ClassificationPolicyResult,
+)
 from app.config import get_settings
 
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gateway-scan")
@@ -361,6 +366,96 @@ async def gateway_proxy(request: Request, path: str) -> Response:
                     },
                 )
 
+    # ── Sprint 3: Classification Policy Evaluation (FR-POL-01–FR-POL-05) ──
+    # Evaluate classification.* policy rules using Thoth signals as first-class
+    # policy attributes alongside structural signals (S3-T2, S3-T3).
+    # Graceful degradation (S3-T4): on_unavailable per-rule mode controls
+    # behaviour when Thoth classification is absent.
+    classification_policy_result: ClassificationPolicyResult | None = None
+    if settings.thoth_enabled or classification_ctx is not None:
+        cls_eval_ctx = PolicyEvalContext(
+            classification=classification_ctx,
+            classification_available=(classification_event == "classified"),
+            threat_risk_level=threat_result.risk_level if threat_result else "low",
+            threat_score=threat_result.score if threat_result else 0.0,
+            tenant_id=tenant_id,
+            model_name=model_name or "unknown",
+            request_id=classification_ctx.request_id if classification_ctx else "",
+        )
+        cls_evaluator = get_classification_policy_evaluator()
+        classification_policy_result = cls_evaluator.evaluate(cls_eval_ctx)
+
+        if classification_policy_result.action == "block":
+            logger.warning(
+                "Classification policy BLOCKED request rule=%s tenant=%s reason=%s",
+                classification_policy_result.matched_rule_name,
+                tenant_id,
+                classification_policy_result.reason,
+            )
+            latency_ms = (time.time() - start_time) * 1000
+            try:
+                await emit_audit_event(
+                    request_body=body,
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    api_key_id=str(api_key_id) if api_key_id else "",
+                    model=model_name or "unknown",
+                    action="blocked_classification_policy",
+                    status_code=403,
+                    latency_ms=latency_ms,
+                    metadata={
+                        "classification_policy": classification_policy_result.to_dict(),
+                        "thoth_classification": (
+                            classification_ctx.to_dict() if classification_ctx else None
+                        ),
+                        "severity": classification_policy_result.audit_severity,
+                        "audit_tag": classification_policy_result.audit_tag,
+                    },
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to emit classification policy audit event", exc_info=True
+                )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "Request blocked by classification policy",
+                    "rule": classification_policy_result.matched_rule_name,
+                    "reason": classification_policy_result.reason,
+                    "audit_severity": classification_policy_result.audit_severity,
+                },
+            )
+
+        elif (
+            classification_policy_result.action == "route"
+            and classification_policy_result.route_endpoint
+        ):
+            target_ep = classification_policy_result.route_endpoint
+            logger.info(
+                "Classification policy routing: endpoint=%s rule=%s tenant=%s",
+                target_ep,
+                classification_policy_result.matched_rule_name,
+                tenant_id,
+            )
+            try:
+                payload = json.loads(body)
+                payload["model"] = target_ep
+                body = json.dumps(payload).encode()
+                model_name = target_ep
+            except (ValueError, TypeError):
+                logger.warning("Failed to update model in body for classification routing")
+            audit_action = "routed_classification_policy"
+
+        elif classification_policy_result.action == "queue_for_review":
+            # Log for HITL integration (Sprint 28); allow through for now
+            logger.info(
+                "Classification policy QUEUE_FOR_REVIEW rule=%s notify=%s tenant=%s",
+                classification_policy_result.matched_rule_name,
+                classification_policy_result.notify,
+                tenant_id,
+            )
+            audit_action = "queued_classification_review"
+
     # ── Rate limit check ──
     estimated_tokens = _estimate_prompt_tokens(body)
     if api_key_id:
@@ -529,6 +624,9 @@ async def gateway_proxy(request: Request, path: str) -> Response:
         audit_metadata["thoth_event"] = classification_event
     elif settings.thoth_enabled:
         audit_metadata["thoth_event"] = classification_event
+    # Sprint 3 (FR-AUD-02): include classification policy evaluation result
+    if classification_policy_result is not None:
+        audit_metadata["classification_policy"] = classification_policy_result.to_dict()
     try:
         await emit_audit_event(
             request_body=body,
