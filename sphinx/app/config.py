@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     canary_token_secret_key: str = "sphinx-canary-default-key"  # HMAC secret — MUST be set in production
     canary_token_default_ttl_seconds: float = 3600.0  # Default 1-hour session TTL
 
+    # Sprint 34: Model Fingerprinting — Stylometric Baseline Engine (Module E17 — SP-340/SP-343)
+    # Feature flag: enable model fingerprinting and deviation scoring.
+    fingerprint_enabled: bool = False
+    fingerprint_warm_up_count: int = 50  # Number of warm-up responses for baseline
+    fingerprint_alert_threshold: float = 2.5  # Deviation alert threshold in sigma
+    fingerprint_model_id: str = ""  # Identifier for the inference model being profiled
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")
