@@ -68,6 +68,8 @@ from app.services.thoth.client import initialize_thoth_client, close_thoth_clien
 from app.services.thoth.circuit_breaker import initialize_thoth_circuit_breaker
 from app.services.siem_export import initialize_siem_exporter, close_siem_exporter
 from app.services.ipia.embedding_service import get_ipia_service
+from app.services.ipia.detector import get_ipia_detector
+from app.services.ipia.threat_event import get_ipia_threat_emitter
 
 logger = logging.getLogger("sphinx.main")
 
@@ -390,6 +392,29 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("IPIA embedding service failed to initialize", exc_info=True)
 
+    # ── IPIA Detector + Threat Event Emitter (Sprint 32 — SP-320/SP-322) ──
+    try:
+        from app.config import get_settings as _get_ipia_settings
+        _ipia_settings = _get_ipia_settings()
+        ipia_detector = get_ipia_detector(
+            service=ipia_service if 'ipia_service' in dir() else None,
+            default_threshold=_ipia_settings.ipia_default_threshold,
+            enabled=_ipia_settings.ipia_enabled,
+        )
+        logger.info(
+            "IPIA detector initialized: enabled=%s threshold=%.2f",
+            ipia_detector.enabled,
+            ipia_detector.default_threshold,
+        )
+
+        ipia_emitter = get_ipia_threat_emitter(
+            kafka_bootstrap_servers=_ipia_settings.kafka_bootstrap_servers,
+        )
+        await ipia_emitter.initialize()
+        logger.info("IPIA threat event emitter initialized")
+    except Exception:
+        logger.warning("IPIA detector/emitter failed to initialize", exc_info=True)
+
     logger.info("Startup complete: all security-critical services operational")
 
     yield
@@ -397,12 +422,17 @@ async def lifespan(app: FastAPI):
     # Shutdown — each block is independent to ensure all resources are released
     logger.info("Shutting down...")
 
+    async def _shutdown_ipia_emitter():
+        emitter = get_ipia_threat_emitter()
+        await emitter.close()
+
     for shutdown_name, shutdown_coro in [
         ("approval expiry monitor", _shutdown_approval_svc()),
         ("alert engine", _shutdown_alert_engine()),
         ("kill-switch subscriber", stop_kill_switch_subscriber()),
         ("health probe / failover", _shutdown_health_failover()),
         ("audit system", _shutdown_audit()),
+        ("ipia threat emitter", _shutdown_ipia_emitter()),
         ("siem exporter", close_siem_exporter()),
         ("thoth client", close_thoth_client()),
         ("redis", close_redis()),

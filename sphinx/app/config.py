@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     thoth_pii_hashing_salt: str = ""       # HMAC salt — MUST be set in production
     thoth_pii_hashing_types: str = "AADHAAR,PAN,BANK_ACCOUNT"  # PII types to hash
 
+    # Sprint 32: IPIA Production Integration (Module E15 — SP-320/SP-324)
+    # Feature flag: opt-in per policy; default False until Sprint 32 staging validated.
+    ipia_enabled: bool = False
+    ipia_default_threshold: float = 0.50  # Default cosine similarity threshold (0.0–1.0)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")

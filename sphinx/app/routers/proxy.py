@@ -34,6 +34,8 @@ from app.services.classification_policy import (
     ClassificationPolicyResult,
 )
 from app.config import get_settings
+from app.services.ipia.detector import get_ipia_detector
+from app.services.ipia.threat_event import get_ipia_threat_emitter
 
 _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gateway-scan")
 
@@ -190,6 +192,116 @@ async def gateway_proxy(request: Request, path: str) -> Response:
             rag_result.intent.intent.value if rag_result.intent else "n/a",
             tenant_id,
         )
+
+    # ── SP-320: IPIA Pre-Context-Injection Intercept (Sprint 32) ──
+    # Scan all RAG chunks before context assembly.  If the request body
+    # contains RAG-retrieved chunks (in a "context" or "documents" field),
+    # run IPIA detection to block indirect prompt injection attempts.
+    try:
+        ipia_detector = get_ipia_detector()
+        if ipia_detector.enabled or settings.ipia_enabled:
+            payload_for_ipia = json.loads(body) if body else {}
+            # Extract RAG chunks from common payload fields
+            ipia_chunks = (
+                payload_for_ipia.get("context", [])
+                or payload_for_ipia.get("documents", [])
+                or payload_for_ipia.get("rag_chunks", [])
+            )
+            # Normalise: if context is a single string, wrap it
+            if isinstance(ipia_chunks, str):
+                ipia_chunks = [ipia_chunks]
+            ipia_query = ""
+            messages = payload_for_ipia.get("messages", [])
+            if messages and isinstance(messages, list):
+                for msg in reversed(messages):
+                    if isinstance(msg, dict) and msg.get("role") == "user":
+                        ipia_query = msg.get("content", "")
+                        break
+
+            if ipia_chunks and ipia_query:
+                # Resolve per-policy ipia settings from request metadata
+                policy_ipia_threshold = payload_for_ipia.get("ipia_threshold")
+                policy_ipia_enabled = payload_for_ipia.get("ipia_enabled")
+
+                ipia_result = await loop.run_in_executor(
+                    _scan_executor,
+                    lambda: ipia_detector.scan_chunks(
+                        chunks=ipia_chunks,
+                        user_query=ipia_query,
+                        tenant_id=tenant_id,
+                        policy_id=project_id,
+                        ipia_threshold=(
+                            float(policy_ipia_threshold)
+                            if policy_ipia_threshold is not None
+                            else None
+                        ),
+                        ipia_enabled=policy_ipia_enabled,
+                    ),
+                )
+
+                if not ipia_result.allowed:
+                    logger.warning(
+                        "IPIA BLOCKED %d/%d RAG chunks tenant=%s policy=%s",
+                        ipia_result.blocked_count,
+                        ipia_result.total_count,
+                        tenant_id,
+                        project_id,
+                    )
+                    # SP-322: emit threat events to TrustDetect asynchronously
+                    try:
+                        emitter = get_ipia_threat_emitter()
+                        for te in ipia_result.threat_events:
+                            await emitter.emit(te)
+                    except Exception:
+                        logger.debug("Failed to emit IPIA threat events", exc_info=True)
+
+                    latency_ms = (time.time() - start_time) * 1000
+                    try:
+                        await emit_audit_event(
+                            request_body=body,
+                            tenant_id=tenant_id,
+                            project_id=project_id,
+                            api_key_id=str(api_key_id) if api_key_id else "",
+                            model=model_name or "unknown",
+                            action="blocked_ipia",
+                            action_taken="block",
+                            status_code=400,
+                            latency_ms=latency_ms,
+                            risk_score=max(
+                                (cr.confidence for cr in ipia_result.chunk_results if cr.is_injection),
+                                default=0.0,
+                            ),
+                            metadata={
+                                "reason": "IPIA indirect prompt injection detected in RAG chunks",
+                                "blocked_count": ipia_result.blocked_count,
+                                "total_chunks": ipia_result.total_count,
+                                "cert_in_ref": "CERT-In-AI-SEC-2025-001",
+                                "scan_time_ms": ipia_result.total_scan_time_ms,
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Failed to emit IPIA audit event", exc_info=True)
+
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "error": "RAG content blocked by IPIA injection detection",
+                            "blocked_chunks": ipia_result.blocked_count,
+                            "total_chunks": ipia_result.total_count,
+                            "details": [
+                                {
+                                    "chunk_index": cr.chunk_index,
+                                    "is_injection": cr.is_injection,
+                                    "confidence": round(cr.confidence, 4),
+                                    "reason": cr.reason,
+                                }
+                                for cr in ipia_result.chunk_results
+                                if cr.is_injection
+                            ],
+                        },
+                    )
+    except Exception:
+        logger.debug("IPIA intercept skipped (non-fatal)", exc_info=True)
 
     # ── Tier 1 + Tier 2 Threat Detection + Data Shield (parallel) ──
     threat_engine = get_threat_engine()
