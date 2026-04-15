@@ -21,6 +21,7 @@ import OnboardingPage from './pages/OnboardingPage';
 import RedTeamPage from './pages/RedTeamPage';
 import MemoryStoreDashboardPage from './pages/MemoryStoreDashboardPage';
 import CircuitBreakerDashboardPage from './pages/CircuitBreakerDashboardPage';
+import IPIADashboardPage from './pages/IPIADashboardPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -64,6 +65,7 @@ export default function App() {
                         <Route path="red-team" element={<RedTeamPage />} />
                         <Route path="memory-store" element={<MemoryStoreDashboardPage />} />
                         <Route path="circuit-breaker" element={<CircuitBreakerDashboardPage />} />
+                        <Route path="ipia-dashboard" element={<IPIADashboardPage />} />
                         <Route path="*" element={<Navigate to="/" replace />} />
                     </Route>
                 </Routes>

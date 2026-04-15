@@ -166,7 +166,7 @@ class IPIASimilarityScorer:
 
         return IPIAClassification(
             is_injection=is_injection,
-            confidence=min(1.0, max_sim / self._threshold) if is_injection else max_sim,
+            confidence=min(1.0, max_sim / self._threshold if self._threshold > 0 else 1.0) if is_injection else max_sim,
             reason=reason,
             max_similarity=max_sim,
             matched_reference_idx=best_idx if is_injection else -1,
@@ -208,7 +208,7 @@ class IPIASimilarityScorer:
 
         return IPIAClassification(
             is_injection=is_injection,
-            confidence=min(1.0, adjusted_sim / self._threshold) if is_injection else adjusted_sim,
+            confidence=min(1.0, adjusted_sim / self._threshold if self._threshold > 0 else 1.0) if is_injection else adjusted_sim,
             reason=reason,
             max_similarity=adjusted_sim,
             matched_reference_idx=best_idx if is_injection else -1,
