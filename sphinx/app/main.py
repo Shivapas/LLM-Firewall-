@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -67,6 +67,7 @@ from app.services.release.v2_checklist import get_v2_release_checklist
 from app.services.thoth.client import initialize_thoth_client, close_thoth_client
 from app.services.thoth.circuit_breaker import initialize_thoth_circuit_breaker
 from app.services.siem_export import initialize_siem_exporter, close_siem_exporter
+from app.services.ipia.embedding_service import get_ipia_service
 
 logger = logging.getLogger("sphinx.main")
 
@@ -377,6 +378,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("SIEM exporter failed to initialize — export disabled", exc_info=True)
 
+    # ── IPIA Embedding Service (Sprint 31 — Module E15) ──
+    try:
+        ipia_service = get_ipia_service()
+        logger.info(
+            "IPIA embedding service initialized: backend=%s dim=%d references=%d",
+            ipia_service.backend.name,
+            ipia_service.backend.dimension,
+            ipia_service.scorer.reference_count,
+        )
+    except Exception:
+        logger.warning("IPIA embedding service failed to initialize", exc_info=True)
+
     logger.info("Startup complete: all security-critical services operational")
 
     yield
@@ -431,3 +444,4 @@ app.include_router(memory_firewall.router)
 app.include_router(a2a_firewall.router)
 app.include_router(hitl.router)
 app.include_router(model_security.router)
+app.include_router(ipia.router)
