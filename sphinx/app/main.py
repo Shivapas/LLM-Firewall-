@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia, canary
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia, canary, fingerprint
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -74,6 +74,9 @@ from app.services.canary.generator import get_canary_generator
 from app.services.canary.injector import get_canary_injector
 from app.services.canary.scanner import get_canary_scanner
 from app.services.canary.threat_event import get_canary_threat_emitter
+from app.services.fingerprint.feature_extractor import get_feature_extractor
+from app.services.fingerprint.baseline_profiler import get_baseline_profiler
+from app.services.fingerprint.deviation_scorer import get_deviation_scorer
 
 logger = logging.getLogger("sphinx.main")
 
@@ -446,6 +449,29 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Canary token module failed to initialize", exc_info=True)
 
+    # ── Model Fingerprinting — Stylometric Baseline Engine (Sprint 34 — Module E17) ──
+    try:
+        from app.config import get_settings as _get_fp_settings
+        _fp_settings = _get_fp_settings()
+        fp_extractor = get_feature_extractor()
+        fp_profiler = get_baseline_profiler(
+            warm_up_count=_fp_settings.fingerprint_warm_up_count,
+            model_id=_fp_settings.fingerprint_model_id,
+        )
+        fp_scorer = get_deviation_scorer(
+            alert_threshold=_fp_settings.fingerprint_alert_threshold,
+        )
+        logger.info(
+            "Model fingerprint module initialized: enabled=%s "
+            "warm_up_count=%d threshold=%.1fσ model_id=%s",
+            _fp_settings.fingerprint_enabled,
+            _fp_settings.fingerprint_warm_up_count,
+            _fp_settings.fingerprint_alert_threshold,
+            _fp_settings.fingerprint_model_id or "(unset)",
+        )
+    except Exception:
+        logger.warning("Model fingerprint module failed to initialize", exc_info=True)
+
     logger.info("Startup complete: all security-critical services operational")
 
     yield
@@ -512,3 +538,4 @@ app.include_router(hitl.router)
 app.include_router(model_security.router)
 app.include_router(ipia.router)
 app.include_router(canary.router)
+app.include_router(fingerprint.router)
