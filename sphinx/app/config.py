@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     ipia_enabled: bool = False
     ipia_default_threshold: float = 0.50  # Default cosine similarity threshold (0.0–1.0)
 
+    # Sprint 33: Canary Token Module (Module E16 — SP-330/SP-335)
+    # Feature flag: per-policy toggle for canary token injection and scanning.
+    canary_token_enabled: bool = True
+    canary_token_secret_key: str = "sphinx-canary-default-key"  # HMAC secret — MUST be set in production
+    canary_token_default_ttl_seconds: float = 3600.0  # Default 1-hour session TTL
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia, canary
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -70,6 +70,10 @@ from app.services.siem_export import initialize_siem_exporter, close_siem_export
 from app.services.ipia.embedding_service import get_ipia_service
 from app.services.ipia.detector import get_ipia_detector
 from app.services.ipia.threat_event import get_ipia_threat_emitter
+from app.services.canary.generator import get_canary_generator
+from app.services.canary.injector import get_canary_injector
+from app.services.canary.scanner import get_canary_scanner
+from app.services.canary.threat_event import get_canary_threat_emitter
 
 logger = logging.getLogger("sphinx.main")
 
@@ -415,6 +419,33 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("IPIA detector/emitter failed to initialize", exc_info=True)
 
+    # ── Canary Token Module (Sprint 33 — Module E16) ──
+    try:
+        from app.config import get_settings as _get_canary_settings
+        _canary_settings = _get_canary_settings()
+        canary_generator = get_canary_generator(
+            secret_key=_canary_settings.canary_token_secret_key,
+            default_ttl_seconds=_canary_settings.canary_token_default_ttl_seconds,
+        )
+        canary_injector = get_canary_injector(
+            generator=canary_generator,
+            enabled=_canary_settings.canary_token_enabled,
+        )
+        canary_scanner = get_canary_scanner(generator=canary_generator)
+        logger.info(
+            "Canary token module initialized: enabled=%s ttl=%.0fs",
+            canary_injector.enabled,
+            _canary_settings.canary_token_default_ttl_seconds,
+        )
+
+        canary_emitter = get_canary_threat_emitter(
+            kafka_bootstrap_servers=_canary_settings.kafka_bootstrap_servers,
+        )
+        await canary_emitter.initialize()
+        logger.info("Canary threat event emitter initialized")
+    except Exception:
+        logger.warning("Canary token module failed to initialize", exc_info=True)
+
     logger.info("Startup complete: all security-critical services operational")
 
     yield
@@ -426,6 +457,10 @@ async def lifespan(app: FastAPI):
         emitter = get_ipia_threat_emitter()
         await emitter.close()
 
+    async def _shutdown_canary_emitter():
+        emitter = get_canary_threat_emitter()
+        await emitter.close()
+
     for shutdown_name, shutdown_coro in [
         ("approval expiry monitor", _shutdown_approval_svc()),
         ("alert engine", _shutdown_alert_engine()),
@@ -433,6 +468,7 @@ async def lifespan(app: FastAPI):
         ("health probe / failover", _shutdown_health_failover()),
         ("audit system", _shutdown_audit()),
         ("ipia threat emitter", _shutdown_ipia_emitter()),
+        ("canary threat emitter", _shutdown_canary_emitter()),
         ("siem exporter", close_siem_exporter()),
         ("thoth client", close_thoth_client()),
         ("redis", close_redis()),
@@ -475,3 +511,4 @@ app.include_router(a2a_firewall.router)
 app.include_router(hitl.router)
 app.include_router(model_security.router)
 app.include_router(ipia.router)
+app.include_router(canary.router)
