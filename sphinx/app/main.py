@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia, canary, fingerprint, supply_chain
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia, canary, fingerprint, supply_chain, owasp
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -82,6 +82,11 @@ from app.services.fingerprint.output_scanner_integration import get_fingerprint_
 from app.services.fingerprint.threat_event import get_supply_chain_threat_emitter
 from app.services.fingerprint.dashboard import get_inference_health_dashboard
 from app.services.fingerprint.dpdpa_compliance import get_dpdpa_validator
+from app.services.owasp.tag_registry import get_tag_registry
+from app.services.owasp.coverage_engine import get_owasp_coverage_engine
+from app.services.owasp.gap_analysis import get_gap_analysis_engine
+from app.services.owasp.dashboard import get_owasp_dashboard
+from app.services.owasp.compliance_export import get_compliance_export_engine
 
 logger = logging.getLogger("sphinx.main")
 
@@ -506,6 +511,26 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Supply chain module failed to initialize", exc_info=True)
 
+    # ── OWASP LLM Top 10 v2025 Compliance Matrix (Sprint 36 — Module E18) ──
+    try:
+        owasp_registry = get_tag_registry()
+        owasp_coverage = get_owasp_coverage_engine()
+        owasp_gap = get_gap_analysis_engine()
+        owasp_dashboard = get_owasp_dashboard()
+        owasp_export = get_compliance_export_engine()
+        # Compute initial coverage to verify module health
+        initial_coverage = owasp_coverage.compute_coverage()
+        logger.info(
+            "OWASP compliance matrix initialized: %d modules registered, "
+            "%d categories, Shield Score=%.1f, scoring_time=%.3fms",
+            owasp_registry.module_count,
+            owasp_registry.category_count,
+            initial_coverage.shield_score,
+            initial_coverage.scoring_time_ms,
+        )
+    except Exception:
+        logger.warning("OWASP compliance matrix failed to initialize", exc_info=True)
+
     logger.info("Startup complete: all security-critical services operational")
 
     yield
@@ -560,7 +585,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sphinx AI Mesh Firewall",
     description="Gateway proxy for LLM provider traffic with multi-provider routing and audit",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -579,3 +604,4 @@ app.include_router(ipia.router)
 app.include_router(canary.router)
 app.include_router(fingerprint.router)
 app.include_router(supply_chain.router)
+app.include_router(owasp.router)

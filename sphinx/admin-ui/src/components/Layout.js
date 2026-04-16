@@ -51,6 +51,7 @@ export default function Layout() {
                     <Link to="/memory-store" style={styles.navLink(location.pathname === '/memory-store')}>Memory Store</Link>
                     <Link to="/circuit-breaker" style={styles.navLink(location.pathname === '/circuit-breaker')}>Circuit Breaker</Link>
                     <Link to="/ipia-dashboard" style={styles.navLink(location.pathname === '/ipia-dashboard')}>IPIA Detection</Link>
+                    <Link to="/owasp-compliance" style={styles.navLink(location.pathname === '/owasp-compliance')}>OWASP Compliance</Link>
                 </nav>
                 <button style={styles.logoutBtn} onClick={logout}>Logout</button>
             </aside>

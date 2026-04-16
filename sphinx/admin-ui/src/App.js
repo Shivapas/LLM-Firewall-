@@ -22,6 +22,7 @@ import RedTeamPage from './pages/RedTeamPage';
 import MemoryStoreDashboardPage from './pages/MemoryStoreDashboardPage';
 import CircuitBreakerDashboardPage from './pages/CircuitBreakerDashboardPage';
 import IPIADashboardPage from './pages/IPIADashboardPage';
+import OWASPDashboardPage from './pages/OWASPDashboardPage';
 import { AuthProvider, useAuth } from './components/AuthContext';
 
 function ProtectedRoute({ children }) {
@@ -66,6 +67,7 @@ export default function App() {
                         <Route path="memory-store" element={<MemoryStoreDashboardPage />} />
                         <Route path="circuit-breaker" element={<CircuitBreakerDashboardPage />} />
                         <Route path="ipia-dashboard" element={<IPIADashboardPage />} />
+                        <Route path="owasp-compliance" element={<OWASPDashboardPage />} />
                         <Route path="*" element={<Navigate to="/" replace />} />
                     </Route>
                 </Routes>
