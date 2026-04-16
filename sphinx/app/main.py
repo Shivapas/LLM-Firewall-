@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.middleware.auth import APIKeyAuthMiddleware
-from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia, canary, fingerprint
+from app.routers import health, proxy, admin, memory_firewall, a2a_firewall, hitl, model_security, ipia, canary, fingerprint, supply_chain
 from app.services.redis_client import close_redis
 from app.services.proxy import close_http_client
 from app.services.database import async_session
@@ -77,6 +77,11 @@ from app.services.canary.threat_event import get_canary_threat_emitter
 from app.services.fingerprint.feature_extractor import get_feature_extractor
 from app.services.fingerprint.baseline_profiler import get_baseline_profiler
 from app.services.fingerprint.deviation_scorer import get_deviation_scorer
+from app.services.fingerprint.supply_chain_monitor import get_supply_chain_monitor
+from app.services.fingerprint.output_scanner_integration import get_fingerprint_output_integration
+from app.services.fingerprint.threat_event import get_supply_chain_threat_emitter
+from app.services.fingerprint.dashboard import get_inference_health_dashboard
+from app.services.fingerprint.dpdpa_compliance import get_dpdpa_validator
 
 logger = logging.getLogger("sphinx.main")
 
@@ -472,6 +477,35 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Model fingerprint module failed to initialize", exc_info=True)
 
+    # ── Supply Chain Integrity + Endpoint Monitoring (Sprint 35 — Module E17) ──
+    try:
+        from app.config import get_settings as _get_sc_settings
+        _sc_settings = _get_sc_settings()
+        sc_monitor = get_supply_chain_monitor(
+            consecutive_threshold=_sc_settings.supply_chain_consecutive_threshold,
+            model_id=_sc_settings.fingerprint_model_id,
+        )
+        fp_integration = get_fingerprint_output_integration(
+            enabled=_sc_settings.supply_chain_scoring_enabled,
+        )
+        sc_dashboard = get_inference_health_dashboard()
+        dpdpa_validator = get_dpdpa_validator()
+        logger.info(
+            "Supply chain monitor initialized: consecutive_threshold=%d "
+            "scoring_enabled=%s model_id=%s",
+            _sc_settings.supply_chain_consecutive_threshold,
+            _sc_settings.supply_chain_scoring_enabled,
+            _sc_settings.fingerprint_model_id or "(unset)",
+        )
+
+        sc_emitter = get_supply_chain_threat_emitter(
+            kafka_bootstrap_servers=_sc_settings.kafka_bootstrap_servers,
+        )
+        await sc_emitter.initialize()
+        logger.info("Supply chain threat event emitter initialized")
+    except Exception:
+        logger.warning("Supply chain module failed to initialize", exc_info=True)
+
     logger.info("Startup complete: all security-critical services operational")
 
     yield
@@ -487,6 +521,10 @@ async def lifespan(app: FastAPI):
         emitter = get_canary_threat_emitter()
         await emitter.close()
 
+    async def _shutdown_supply_chain_emitter():
+        emitter = get_supply_chain_threat_emitter()
+        await emitter.close()
+
     for shutdown_name, shutdown_coro in [
         ("approval expiry monitor", _shutdown_approval_svc()),
         ("alert engine", _shutdown_alert_engine()),
@@ -495,6 +533,7 @@ async def lifespan(app: FastAPI):
         ("audit system", _shutdown_audit()),
         ("ipia threat emitter", _shutdown_ipia_emitter()),
         ("canary threat emitter", _shutdown_canary_emitter()),
+        ("supply chain threat emitter", _shutdown_supply_chain_emitter()),
         ("siem exporter", close_siem_exporter()),
         ("thoth client", close_thoth_client()),
         ("redis", close_redis()),
@@ -539,3 +578,4 @@ app.include_router(model_security.router)
 app.include_router(ipia.router)
 app.include_router(canary.router)
 app.include_router(fingerprint.router)
+app.include_router(supply_chain.router)

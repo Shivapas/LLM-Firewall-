@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     fingerprint_alert_threshold: float = 2.5  # Deviation alert threshold in sigma
     fingerprint_model_id: str = ""  # Identifier for the inference model being profiled
 
+    # Sprint 35: Supply Chain Integrity + Endpoint Monitoring (Module E17 — SP-350/SP-355)
+    # Consecutive high-deviation responses required before supply chain alert
+    supply_chain_consecutive_threshold: int = 5
+    # Enable fingerprint scoring in the output scanning layer (SP-351)
+    supply_chain_scoring_enabled: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @field_validator("database_url")
