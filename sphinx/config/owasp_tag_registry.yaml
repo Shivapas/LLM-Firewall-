@@ -1,0 +1,325 @@
+# OWASP LLM Top 10 v2025 — Sphinx Module Tag Registry
+# Sprint 36 / SP-360
+#
+# Maps each Sphinx module (v2.0 base + Roadmap v1 E15–E17) to the OWASP LLM
+# Top 10 v2025 categories it addresses.
+#
+# Categories:
+#   LLM01  Prompt Injection
+#   LLM02  Sensitive Information Disclosure
+#   LLM03  Supply Chain Vulnerabilities
+#   LLM04  Data and Model Poisoning
+#   LLM05  Improper Output Handling
+#   LLM06  Excessive Agency
+#   LLM07  System Prompt Leakage
+#   LLM08  Vector and Embedding Weaknesses
+#   LLM09  Misinformation
+#   LLM10  Unbounded Consumption
+
+owasp_version: "2025"
+registry_version: "1.0.0"
+last_updated: "2026-04-16"
+
+categories:
+  LLM01:
+    name: "Prompt Injection"
+    description: "Direct and indirect prompt injection attacks targeting LLM inputs"
+  LLM02:
+    name: "Sensitive Information Disclosure"
+    description: "Unintended exposure of sensitive data through LLM responses"
+  LLM03:
+    name: "Supply Chain Vulnerabilities"
+    description: "Risks from third-party components, models, and data sources"
+  LLM04:
+    name: "Data and Model Poisoning"
+    description: "Manipulation of training data or model weights"
+  LLM05:
+    name: "Improper Output Handling"
+    description: "Failure to validate or sanitize LLM-generated outputs"
+  LLM06:
+    name: "Excessive Agency"
+    description: "Granting LLMs too much autonomy or access"
+  LLM07:
+    name: "System Prompt Leakage"
+    description: "Unintended disclosure of system prompts via model outputs"
+  LLM08:
+    name: "Vector and Embedding Weaknesses"
+    description: "Vulnerabilities in RAG pipelines, embeddings, and vector stores"
+  LLM09:
+    name: "Misinformation"
+    description: "Generation of false or misleading content by LLMs"
+  LLM10:
+    name: "Unbounded Consumption"
+    description: "Excessive resource usage from uncontrolled LLM operations"
+
+modules:
+  # ── Sphinx v2.0 Base Modules (Sprints 1–30) ──────────────────────────
+
+  threat_detection:
+    name: "ThreatDetect Engine"
+    version: "v2.0"
+    description: "Tier 1 pattern-based + Tier 2 ML semantic threat detection"
+    owasp_tags: [LLM01, LLM05]
+    config_key: "threat_detection_enabled"
+    default_enabled: true
+
+  data_shield:
+    name: "DataShield PII/PHI Engine"
+    version: "v2.0"
+    description: "PII/PHI/credential detection and redaction"
+    owasp_tags: [LLM02]
+    config_key: "data_shield_enabled"
+    default_enabled: true
+
+  output_scanner:
+    name: "Output Scanner"
+    version: "v2.0"
+    description: "Response scanning for sensitive content, code injection, and policy violations"
+    owasp_tags: [LLM02, LLM05]
+    config_key: "output_scanner_enabled"
+    default_enabled: true
+
+  rag_pipeline:
+    name: "RAG Query Firewall"
+    version: "v2.0"
+    description: "Query classification and intent filtering for RAG pipelines"
+    owasp_tags: [LLM01, LLM08]
+    config_key: "rag_firewall_enabled"
+    default_enabled: true
+
+  vectordb_proxy:
+    name: "VectorDB Security Proxy"
+    version: "v2.0"
+    description: "Namespace isolation, chunk scanning, and access control for vector databases"
+    owasp_tags: [LLM04, LLM08]
+    config_key: "vectordb_proxy_enabled"
+    default_enabled: true
+
+  mcp_guardrails:
+    name: "MCP Tool Call Guardrails"
+    version: "v2.0"
+    description: "Agent scope enforcement, tool call audit, and risk scoring for MCP servers"
+    owasp_tags: [LLM06]
+    config_key: "mcp_guardrails_enabled"
+    default_enabled: true
+
+  agent_scope:
+    name: "Agent Scope Enforcement"
+    version: "v2.0"
+    description: "Permission boundaries and scope limits for autonomous agents"
+    owasp_tags: [LLM06]
+    config_key: "agent_scope_enabled"
+    default_enabled: true
+
+  memory_firewall:
+    name: "Memory Firewall"
+    version: "v2.0"
+    description: "Memory store isolation, integrity verification, and instruction scanning"
+    owasp_tags: [LLM01, LLM04]
+    config_key: "memory_firewall_enabled"
+    default_enabled: true
+
+  session_security:
+    name: "Session Security"
+    version: "v2.0"
+    description: "Cross-turn risk accumulation and session context isolation"
+    owasp_tags: [LLM01, LLM06]
+    config_key: "session_security_enabled"
+    default_enabled: true
+
+  rate_limiter:
+    name: "Rate Limiter"
+    version: "v2.0"
+    description: "Per-tenant rate limiting and token budget enforcement"
+    owasp_tags: [LLM10]
+    config_key: "rate_limiter_enabled"
+    default_enabled: true
+
+  token_budget:
+    name: "Token Budget Manager"
+    version: "v2.0"
+    description: "Per-request and per-session token consumption limits"
+    owasp_tags: [LLM10]
+    config_key: "token_budget_enabled"
+    default_enabled: true
+
+  cost_tracker:
+    name: "Cost Tracker"
+    version: "v2.0"
+    description: "Provider-level cost tracking and budget alerts"
+    owasp_tags: [LLM10]
+    config_key: "cost_tracker_enabled"
+    default_enabled: true
+
+  circuit_breaker:
+    name: "Circuit Breaker"
+    version: "v2.0"
+    description: "Provider health monitoring and automatic failover"
+    owasp_tags: [LLM03, LLM10]
+    config_key: "circuit_breaker_enabled"
+    default_enabled: true
+
+  kill_switch:
+    name: "Kill Switch"
+    version: "v2.0"
+    description: "Emergency traffic termination per provider/tenant/policy"
+    owasp_tags: [LLM06, LLM10]
+    config_key: "kill_switch_enabled"
+    default_enabled: true
+
+  audit_system:
+    name: "Audit Trail + Hash Chain"
+    version: "v2.0"
+    description: "Tamper-evident audit logging with hash chain integrity"
+    owasp_tags: [LLM02, LLM06]
+    config_key: "audit_enabled"
+    default_enabled: true
+
+  compliance_reports:
+    name: "Compliance Reports"
+    version: "v2.0"
+    description: "Automated compliance report generation (SOC2, GDPR, DPDPA)"
+    owasp_tags: [LLM02]
+    config_key: "compliance_reports_enabled"
+    default_enabled: true
+
+  model_scanner:
+    name: "Model Artifact Scanner"
+    version: "v2.0"
+    description: "Pre-deployment model scanning and provenance verification"
+    owasp_tags: [LLM03, LLM04]
+    config_key: "model_scanner_enabled"
+    default_enabled: true
+
+  semantic_cache:
+    name: "Semantic Cache"
+    version: "v2.0"
+    description: "Response caching with security isolation and poisoning prevention"
+    owasp_tags: [LLM04, LLM10]
+    config_key: "semantic_cache_enabled"
+    default_enabled: true
+
+  multilingual_detector:
+    name: "Multilingual Threat Detector"
+    version: "v2.0"
+    description: "Cross-language injection detection and Unicode normalization"
+    owasp_tags: [LLM01]
+    config_key: "multilingual_enabled"
+    default_enabled: true
+
+  red_team:
+    name: "Red Team Engine"
+    version: "v2.0"
+    description: "Automated adversarial testing with injection, jailbreak, and PII probes"
+    owasp_tags: [LLM01, LLM02, LLM05]
+    config_key: "red_team_enabled"
+    default_enabled: true
+
+  hitl:
+    name: "Human-in-the-Loop Approval"
+    version: "v2.0"
+    description: "High-risk action approval workflows with anomaly detection"
+    owasp_tags: [LLM06]
+    config_key: "hitl_enabled"
+    default_enabled: true
+
+  a2a_firewall:
+    name: "Agent-to-Agent Firewall"
+    version: "v2.0"
+    description: "mTLS, message signing, and scope enforcement for A2A protocols"
+    owasp_tags: [LLM03, LLM06]
+    config_key: "a2a_firewall_enabled"
+    default_enabled: true
+
+  thoth_classifier:
+    name: "Thoth Semantic Classifier"
+    version: "v2.0"
+    description: "ML-based semantic classification of prompts and responses"
+    owasp_tags: [LLM01, LLM05, LLM09]
+    config_key: "thoth_enabled"
+    default_enabled: false
+
+  policy_engine:
+    name: "Policy Engine"
+    version: "v2.0"
+    description: "Configurable security policy enforcement with versioning"
+    owasp_tags: [LLM01, LLM02, LLM05, LLM06]
+    config_key: "policy_engine_enabled"
+    default_enabled: true
+
+  routing_engine:
+    name: "Multi-Provider Routing"
+    version: "v2.0"
+    description: "Intelligent routing with failover and budget-aware downgrade"
+    owasp_tags: [LLM03, LLM10]
+    config_key: "routing_enabled"
+    default_enabled: true
+
+  credential_store:
+    name: "Credential Store"
+    version: "v2.0"
+    description: "Encrypted credential management with rotation support"
+    owasp_tags: [LLM02, LLM03]
+    config_key: "credential_store_enabled"
+    default_enabled: true
+
+  siem_export:
+    name: "SIEM Export"
+    version: "v2.0"
+    description: "Real-time security event export to SIEM/data lake"
+    owasp_tags: [LLM02]
+    config_key: "siem_export_enabled"
+    default_enabled: false
+
+  ai_spm:
+    name: "AI-SPM Discovery"
+    version: "v2.0"
+    description: "AI Security Posture Management and asset discovery"
+    owasp_tags: [LLM03, LLM06]
+    config_key: "ai_spm_enabled"
+    default_enabled: true
+
+  eu_ai_act:
+    name: "EU AI Act Compliance"
+    version: "v2.0"
+    description: "EU AI Act risk classification and transparency requirements"
+    owasp_tags: [LLM02, LLM09]
+    config_key: "eu_ai_act_enabled"
+    default_enabled: true
+
+  dpdpa_compliance:
+    name: "DPDPA / CERT-In Compliance"
+    version: "v2.0"
+    description: "Indian regulatory compliance with data residency and PII controls"
+    owasp_tags: [LLM02]
+    config_key: "dpdpa_enabled"
+    default_enabled: true
+
+  # ── Roadmap v1 Modules (Sprints 31–35, E15–E17) ─────────────────────
+
+  ipia_engine:
+    name: "IPIA Embedding Engine"
+    version: "v2.1"
+    module_id: "E15"
+    description: "Indirect Prompt Injection Attack detection via joint-context embedding and cosine similarity scoring"
+    owasp_tags: [LLM01, LLM08]
+    config_key: "ipia_enabled"
+    default_enabled: false
+
+  canary_token:
+    name: "Canary Token Module"
+    version: "v2.1"
+    module_id: "E16"
+    description: "Session-scoped HMAC-signed canary tokens for system prompt leakage detection"
+    owasp_tags: [LLM07]
+    config_key: "canary_token_enabled"
+    default_enabled: true
+
+  model_fingerprint:
+    name: "Model Fingerprinting Engine"
+    version: "v2.1"
+    module_id: "E17"
+    description: "16-feature stylometric fingerprinting with baseline profiling and z-score deviation scoring for model swap detection"
+    owasp_tags: [LLM03, LLM04]
+    config_key: "fingerprint_enabled"
+    default_enabled: false
